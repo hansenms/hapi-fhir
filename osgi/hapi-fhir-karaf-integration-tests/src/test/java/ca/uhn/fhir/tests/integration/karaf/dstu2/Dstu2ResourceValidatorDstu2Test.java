@@ -26,6 +26,7 @@ import ca.uhn.fhir.model.primitive.StringDt;
 import ca.uhn.fhir.parser.DataFormatException;
 import ca.uhn.fhir.parser.IParser;
 import ca.uhn.fhir.parser.StrictErrorHandler;
+import ca.uhn.fhir.tests.integration.karaf.ValidationConstants;
 import ca.uhn.fhir.validation.FhirValidator;
 import ca.uhn.fhir.validation.SchemaBaseValidator;
 import ca.uhn.fhir.validation.ValidationFailureException;
@@ -85,7 +86,7 @@ public class Dstu2ResourceValidatorDstu2Test {
 	private FhirValidator createFhirValidator() {
 		FhirValidator val = ourCtx.newValidator();
 		val.setValidateAgainstStandardSchema(true);
-		val.setValidateAgainstStandardSchematron(true);
+		val.setValidateAgainstStandardSchematron(ValidationConstants.SCHEMATRON_ENABLED);
 		return val;
 	}
 
@@ -144,32 +145,6 @@ public class Dstu2ResourceValidatorDstu2Test {
 		assertTrue(result.toString(), result.isSuccessful());
 		assertNotNull(operationOutcome);
 		assertEquals(1, operationOutcome.getIssue().size());
-	}
-
-	@SuppressWarnings("deprecation")
-	@Test
-	public void testSchemaResourceValidator() throws IOException {
-		String res = IOUtils.toString(getClass().getClassLoader().getResourceAsStream("patient-example-dicom.json"));
-		Patient p = ourCtx.newJsonParser().parseResource(Patient.class, res);
-
-		ourLog.info(ourCtx.newXmlParser().setPrettyPrint(true).encodeResourceToString(p));
-
-		FhirValidator val = ourCtx.newValidator();
-		val.setValidateAgainstStandardSchema(true);
-		val.setValidateAgainstStandardSchematron(false);
-
-		val.validate(p);
-
-		p.getAnimal().getBreed().setText("The Breed");
-		try {
-			val.validate(p);
-			fail();
-		} catch (ValidationFailureException e) {
-			OperationOutcome operationOutcome = (OperationOutcome) e.getOperationOutcome();
-			ourLog.info(ourCtx.newXmlParser().setPrettyPrint(true).encodeResourceToString(operationOutcome));
-			assertEquals(1, operationOutcome.getIssue().size());
-			assertThat(operationOutcome.getIssueFirstRep().getDetailsElement().getValue(), containsString("cvc-complex-type"));
-		}
 	}
 
 	/**
@@ -246,7 +221,9 @@ public class Dstu2ResourceValidatorDstu2Test {
 
 		FhirValidator val = ourCtx.newValidator();
 		val.registerValidatorModule(new SchemaBaseValidator(ourCtx));
-		val.registerValidatorModule(new SchematronBaseValidator(ourCtx));
+		if (ValidationConstants.SCHEMATRON_ENABLED) {
+			val.registerValidatorModule(new SchematronBaseValidator(ourCtx));
+		}
 
 		ValidationResult result = val.validateWithResult(messageString);
 
@@ -299,7 +276,9 @@ public class Dstu2ResourceValidatorDstu2Test {
 
 		FhirValidator val = ourCtx.newValidator();
 		val.registerValidatorModule(new SchemaBaseValidator(ourCtx));
-		val.registerValidatorModule(new SchematronBaseValidator(ourCtx));
+		if (ValidationConstants.SCHEMATRON_ENABLED) {
+			val.registerValidatorModule(new SchematronBaseValidator(ourCtx));
+		}
 
 		ValidationResult result = val.validateWithResult(messageString);
 

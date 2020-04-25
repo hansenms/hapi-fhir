@@ -6,16 +6,17 @@ import java.util.Properties;
 import javax.persistence.EntityManagerFactory;
 import javax.sql.DataSource;
 
+import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.jpa.config.BaseConfig;
+import ca.uhn.fhir.jpa.util.DerbyTenSevenHapiFhirDialect;
 import org.apache.commons.dbcp2.BasicDataSource;
 import org.apache.commons.lang3.time.DateUtils;
-import org.hibernate.jpa.HibernatePersistenceProvider;
 import org.springframework.core.env.Environment;
 import org.springframework.orm.jpa.JpaTransactionManager;
 import org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;
 
 import ca.uhn.fhir.jpa.dao.DaoConfig;
 import ca.uhn.fhir.jpa.search.LuceneSearchMappingFactory;
-import ca.uhn.fhir.rest.server.interceptor.IServerInterceptor;
 import ca.uhn.fhir.rest.server.interceptor.LoggingInterceptor;
 import ca.uhn.fhir.rest.server.interceptor.ResponseHighlighterInterceptor;
 
@@ -29,7 +30,7 @@ import ca.uhn.fhir.rest.server.interceptor.ResponseHighlighterInterceptor;
 public class FhirServerConfigCommon {
 
 	private static final org.slf4j.Logger logger = org.slf4j.LoggerFactory.getLogger(FhirServerConfigCommon.class);
-	
+
 	/**
 	 * Configure FHIR properties around the the JPA server via this bean
 	 */
@@ -84,22 +85,23 @@ public class FhirServerConfigCommon {
 		return dataSource;
 	}
 
-	public static LocalContainerEntityManagerFactoryBean getEntityManagerFactory(Environment env, DataSource dataSource) {
+	public static LocalContainerEntityManagerFactoryBean getEntityManagerFactory(Environment env, DataSource dataSource, FhirContext theCtx) {
 		LocalContainerEntityManagerFactoryBean retVal = new LocalContainerEntityManagerFactoryBean();
+		BaseConfig.configureEntityManagerFactory(retVal, theCtx);
+
 		retVal.setPersistenceUnitName("HAPI_PU");
 		retVal.setDataSource(dataSource);
-		
-		retVal.setPackagesToScan("ca.uhn.fhir.jpa.entity");
-		retVal.setPersistenceProvider(new HibernatePersistenceProvider());
 		retVal.setJpaProperties(jpaProperties(env));
+
 		return retVal;
 	}
 
 
 	/**
 	 * Do some fancy logging to create a nice access log that has details about each incoming request.
+	 * @return
 	 */
-	public static IServerInterceptor loggingInterceptor() {
+	public static LoggingInterceptor loggingInterceptor() {
 		LoggingInterceptor retVal = new LoggingInterceptor();
 		retVal.setLoggerName("fhirtest.access");
 		retVal.setMessageFormat(
@@ -111,8 +113,9 @@ public class FhirServerConfigCommon {
 
 	/**
 	 * This interceptor adds some pretty syntax highlighting in responses when a browser is detected
+	 * @return
 	 */
-	public static IServerInterceptor getResponseHighlighterInterceptor() {
+	public static ResponseHighlighterInterceptor getResponseHighlighterInterceptor() {
 		ResponseHighlighterInterceptor retVal = new ResponseHighlighterInterceptor();
 		return retVal;
 	}
@@ -134,7 +137,7 @@ public class FhirServerConfigCommon {
 			extraProperties.put("hibernate.dialect", org.hibernate.dialect.PostgreSQL9Dialect.class.getName());
 		} 
 		else if(dbUrl != null && dbUrl.indexOf("derby") > -1) {
-			extraProperties.put("hibernate.dialect", org.hibernate.dialect.DerbyTenSevenDialect.class.getName());
+			extraProperties.put("hibernate.dialect", DerbyTenSevenHapiFhirDialect.class.getName());
 		} 
 		boolean hibernateCreate = new Boolean(env.getProperty(Utils.HIBERNATE_CREATE));
 		logger.info("------DB hibernateCreate: " + hibernateCreate);

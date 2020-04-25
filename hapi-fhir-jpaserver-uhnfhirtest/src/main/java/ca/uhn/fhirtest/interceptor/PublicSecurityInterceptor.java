@@ -1,7 +1,7 @@
 package ca.uhn.fhirtest.interceptor;
 
 import ca.uhn.fhir.jpa.provider.BaseJpaSystemProvider;
-import ca.uhn.fhir.jpa.provider.BaseTerminologyUploaderProvider;
+import ca.uhn.fhir.jpa.model.util.JpaConstants;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
 import ca.uhn.fhir.rest.server.exceptions.ForbiddenOperationException;
 import ca.uhn.fhir.rest.server.interceptor.auth.AuthorizationInterceptor;
@@ -18,7 +18,7 @@ public class PublicSecurityInterceptor extends AuthorizationInterceptor {
 
 	private static final org.slf4j.Logger ourLog = org.slf4j.LoggerFactory.getLogger(PublicSecurityInterceptor.class);
 	private HashSet<String> myTokens;
-	
+
 	public PublicSecurityInterceptor() {
 		String passwordsString = System.getProperty("fhir.tdlpass");
 		String[] passwords = passwordsString.split(",");
@@ -33,8 +33,13 @@ public class PublicSecurityInterceptor extends AuthorizationInterceptor {
 
 		if (isBlank(authHeader)) {
 			return new RuleBuilder()
-				.deny().operation().named(BaseJpaSystemProvider.MARK_ALL_RESOURCES_FOR_REINDEXING).onServer().andThen()
-				.deny().operation().named(BaseTerminologyUploaderProvider.UPLOAD_EXTERNAL_CODE_SYSTEM).onServer().andThen()
+				.deny().operation().named(BaseJpaSystemProvider.MARK_ALL_RESOURCES_FOR_REINDEXING).onServer().andAllowAllResponses().andThen()
+				.deny().operation().named(JpaConstants.OPERATION_UPLOAD_EXTERNAL_CODE_SYSTEM).onServer().andAllowAllResponses().andThen()
+				.deny().operation().named(JpaConstants.OPERATION_APPLY_CODESYSTEM_DELTA_ADD).atAnyLevel().andAllowAllResponses().andThen()
+				.deny().operation().named(JpaConstants.OPERATION_APPLY_CODESYSTEM_DELTA_REMOVE).atAnyLevel().andAllowAllResponses().andThen()
+				.deny().operation().named(JpaConstants.OPERATION_EXPUNGE).onServer().andAllowAllResponses().andThen()
+				.deny().operation().named(JpaConstants.OPERATION_EXPUNGE).onAnyType().andAllowAllResponses().andThen()
+				.deny().operation().named(JpaConstants.OPERATION_EXPUNGE).onAnyInstance().andAllowAllResponses().andThen()
 				.allowAll()
 				.build();
 		}

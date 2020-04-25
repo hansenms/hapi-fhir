@@ -1,194 +1,158 @@
 package ca.uhn.fhir.parser;
 
-import ca.uhn.fhir.context.FhirContext;
-import ca.uhn.fhir.util.TestUtil;
-import com.google.common.collect.Sets;
+import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.stringContainsInOrder;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotEquals;
+import static org.junit.Assert.assertThat;
+
+import ca.uhn.fhir.test.BaseTest;
+
+import org.hl7.fhir.instance.model.api.IBaseResource;
+import org.hl7.fhir.r4.model.AuditEvent;
 import org.hl7.fhir.r4.model.Bundle;
+import org.hl7.fhir.r4.model.Composition;
+import org.hl7.fhir.r4.model.DocumentReference;
+import org.hl7.fhir.r4.model.MessageHeader;
+import org.hl7.fhir.r4.model.Narrative;
 import org.hl7.fhir.r4.model.Observation;
 import org.hl7.fhir.r4.model.Patient;
-import org.hl7.fhir.r4.model.Reference;
-import org.junit.AfterClass;
 import org.junit.Test;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.Set;
+import ca.uhn.fhir.context.FhirContext;
+import com.google.common.base.Charsets;
+import com.google.common.io.Resources;
 
-import static org.hamcrest.Matchers.containsString;
-import static org.hamcrest.core.IsNot.not;
-import static org.hamcrest.text.StringContainsInOrder.stringContainsInOrder;
-import static org.junit.Assert.*;
+import java.io.IOException;
+import java.net.URL;
 
-public class XmlParserR4Test {
+public class XmlParserR4Test extends BaseTest {
 	private static final Logger ourLog = LoggerFactory.getLogger(XmlParserR4Test.class);
 	private static FhirContext ourCtx = FhirContext.forR4();
-
-	private Bundle createBundleWithPatient() {
-		Bundle b = new Bundle();
-		b.setId("BUNDLEID");
-		b.getMeta().addProfile("http://FOO");
-
-		Patient p = new Patient();
-		p.setId("PATIENTID");
-		p.getMeta().addProfile("http://BAR");
-		p.addName().addGiven("GIVEN");
-		b.addEntry().setResource(p);
-		return b;
-	}
-
-	@Test
-	public void testParseAndEncodeXmlNumericEntity() {
-		String input = "<Patient xmlns=\"http://hl7.org/fhir\">\n" +
-			"    <name>\n" +
-			"       <family value=\"A &#xA; B\"/>\n" +
-			"    </name>\n" +
-			"</Patient>";
-
-		Patient p = ourCtx.newXmlParser().parseResource(Patient.class, input);
-		assertEquals("A \n B", p.getNameFirstRep().getFamily());
-
-		String output = ourCtx.newXmlParser().setPrettyPrint(true).encodeResourceToString(p);
-		ourLog.info(output);
-
-	}
-
-	@Test
-	public void testExcludeNothing() {
-		IParser parser = ourCtx.newXmlParser().setPrettyPrint(true);
-		Set<String> excludes = new HashSet<>();
-//		excludes.add("*.id");
-		parser.setDontEncodeElements(excludes);
-
-		Bundle b = createBundleWithPatient();
-
-		String encoded = parser.encodeResourceToString(b);
-		ourLog.info(encoded);
-
-		assertThat(encoded, containsString("BUNDLEID"));
-		assertThat(encoded, containsString("http://FOO"));
-		assertThat(encoded, containsString("PATIENTID"));
-		assertThat(encoded, containsString("http://BAR"));
-		assertThat(encoded, containsString("GIVEN"));
-
-		b = parser.parseResource(Bundle.class, encoded);
-
-		assertEquals("BUNDLEID", b.getIdElement().getIdPart());
-		assertEquals("Patient/PATIENTID", ((Patient) b.getEntry().get(0).getResource()).getId());
-		assertEquals("GIVEN", ((Patient) b.getEntry().get(0).getResource()).getNameFirstRep().getGivenAsSingleString());
-	}
-
-	@Test
-	public void testExcludeRootStuff() {
-		IParser parser = ourCtx.newXmlParser().setPrettyPrint(true);
-		Set<String> excludes = new HashSet<>();
-		excludes.add("id");
-		excludes.add("meta");
-		parser.setDontEncodeElements(excludes);
-
-		Bundle b = createBundleWithPatient();
-
-		String encoded = parser.encodeResourceToString(b);
-		ourLog.info(encoded);
-
-		assertThat(encoded, not(containsString("BUNDLEID")));
-		assertThat(encoded, not(containsString("http://FOO")));
-		assertThat(encoded, (containsString("PATIENTID")));
-		assertThat(encoded, (containsString("http://BAR")));
-		assertThat(encoded, containsString("GIVEN"));
-
-		b = parser.parseResource(Bundle.class, encoded);
-
-		assertNotEquals("BUNDLEID", b.getIdElement().getIdPart());
-		assertEquals("Patient/PATIENTID", ((Patient) b.getEntry().get(0).getResource()).getId());
-		assertEquals("GIVEN", ((Patient) b.getEntry().get(0).getResource()).getNameFirstRep().getGivenAsSingleString());
-	}
-
-	@Test
-	public void testExcludeStarDotStuff() {
-		IParser parser = ourCtx.newXmlParser().setPrettyPrint(true);
-		Set<String> excludes = new HashSet<>();
-		excludes.add("*.id");
-		excludes.add("*.meta");
-		parser.setDontEncodeElements(excludes);
-
-		Bundle b = createBundleWithPatient();
-
-		String encoded = parser.encodeResourceToString(b);
-		ourLog.info(encoded);
-
-		assertThat(encoded, not(containsString("BUNDLEID")));
-		assertThat(encoded, not(containsString("http://FOO")));
-		assertThat(encoded, not(containsString("PATIENTID")));
-		assertThat(encoded, not(containsString("http://BAR")));
-		assertThat(encoded, containsString("GIVEN"));
-
-		b = parser.parseResource(Bundle.class, encoded);
-
-		assertNotEquals("BUNDLEID", b.getIdElement().getIdPart());
-		assertNotEquals("Patient/PATIENTID", ((Patient) b.getEntry().get(0).getResource()).getId());
-		assertEquals("GIVEN", ((Patient) b.getEntry().get(0).getResource()).getNameFirstRep().getGivenAsSingleString());
-	}
-
-	@Test
-	public void testParseAndEncodeExtensionWithValueWithExtension() {
-		String input = "<Patient xmlns=\"http://hl7.org/fhir\">\n" +
-			"    <extension url=\"https://purl.org/elab/fhir/network/StructureDefinition/1/BirthWeight\">\n" +
-			"       <valueDecimal>\n" +
-			"          <extension url=\"http://www.hl7.org/fhir/extension-data-absent-reason.html\">\n" +
-			"            <valueCoding>\n" +
-			"                <system value=\"http://hl7.org/fhir/ValueSet/birthweight\"/>\n" +
-			"                <code value=\"Underweight\"/>\n" +
-			"                <userSelected value=\"false\"/>\n" +
-			"            </valueCoding>\n" +
-			"          </extension>\n" +
-			"       </valueDecimal>\n" +
-			"    </extension>\n" +
-			"    <identifier>\n" +
-			"       <system value=\"https://purl.org/elab/fhir/network/StructureDefinition/1/EuroPrevallStudySubjects\"/>\n" +
-			"       <value value=\"1\"/>\n" +
-			"    </identifier>\n" +
-			"    <gender value=\"female\"/>\n" +
-			"</Patient>";
-
-		IParser xmlParser = ourCtx.newXmlParser();
-		IParser jsonParser = ourCtx.newJsonParser();
-		jsonParser.setDontEncodeElements(Sets.newHashSet("id", "meta"));
-		xmlParser.setDontEncodeElements(Sets.newHashSet("id", "meta"));
-
-		Patient parsed = xmlParser.parseResource(Patient.class, input);
-
-		ourLog.info(jsonParser.setPrettyPrint(true).encodeResourceToString(parsed));
-		assertThat(xmlParser.encodeResourceToString(parsed), containsString("Underweight"));
-		assertThat(jsonParser.encodeResourceToString(parsed), containsString("Underweight"));
-
+	
+	
+	private Composition createComposition(String sectionText) {
+		Composition c = new Composition();
+		Narrative compositionText = new Narrative().setStatus(Narrative.NarrativeStatus.GENERATED);
+		compositionText.setDivAsString("Composition");		
+		Narrative compositionSectionText = new Narrative().setStatus(Narrative.NarrativeStatus.GENERATED);
+		compositionSectionText.setDivAsString(sectionText);		
+		c.setText(compositionText);
+		c.addSection().setText(compositionSectionText);
+		return c;
 	}
 
 	/**
-	 * See #11
+	 * See #402 section.text is overwritten by composition.text
 	 */
 	@Test
-	public void testDuplicateContainedResources() {
+	public void testEncodingTextSection() {
 
-		Observation resA = new Observation();
-		resA.setComment("A");
+		String sectionText = "sectionText";
+		Composition composition = createComposition(sectionText);
 
-		Observation resB = new Observation();
-		resB.setComment("B");
-		resB.addHasMember(new Reference(resA));
-		resB.addHasMember(new Reference(resA));
-
-		String encoded = ourCtx.newXmlParser().setPrettyPrint(true).encodeResourceToString(resB);
+		String encoded = ourCtx.newXmlParser().encodeResourceToString(composition);
 		ourLog.info(encoded);
 
-		assertThat(encoded, stringContainsInOrder(Arrays.asList("<contained>", "<Observation", "</Observation>", "</contained>")));
-		assertThat(encoded, not(stringContainsInOrder(Arrays.asList("<contained>", "<Observation", "</Observation>", "<Observation", "</contained>"))));
+		int idx = encoded.indexOf(sectionText);
+		assertNotEquals(-1, idx);
 	}
 
-	@AfterClass
-	public static void afterClassClearContext() {
-		TestUtil.clearAllStaticFieldsForUnitTest();
+	@Test
+	public void testEncodeAndParseBundleWithFullUrlAndResourceIdMismatch() {
+
+		MessageHeader header = new MessageHeader();
+		header.setId("1.1.1.1");
+		header.setDefinition("Hello");
+
+		Bundle input = new Bundle();
+		input
+			.addEntry()
+			.setFullUrl("urn:uuid:0.0.0.0")
+			.setResource(header);
+
+		String encoded = ourCtx.newXmlParser().setPrettyPrint(true).encodeResourceToString(input);
+
+		ourLog.info("Encoded: {}", encoded);
+		assertThat(encoded, stringContainsInOrder(
+			"<fullUrl value=\"urn:uuid:0.0.0.0\"/>",
+			"<id value=\"1.1.1.1\"/>"
+		));
+
+		input = ourCtx.newXmlParser().parseResource(Bundle.class, encoded);
+		assertEquals("urn:uuid:0.0.0.0", input.getEntry().get(0).getFullUrl());
+		assertEquals("MessageHeader/1.1.1.1", input.getEntry().get(0).getResource().getId());
+
 	}
+
+	@Test
+	public void testParseBundleWithMultipleNestedContainedResources() throws Exception {
+		URL url = Resources.getResource("bundle-with-two-patient-resources.xml");
+		String text = Resources.toString(url, Charsets.UTF_8);
+
+		Bundle bundle = ourCtx.newXmlParser().parseResource(Bundle.class, text);
+		
+		assertEquals("12346", getPatientIdValue(bundle, 0));
+		assertEquals("12345", getPatientIdValue(bundle, 1));
+	}
+
+	private String getPatientIdValue(Bundle input, int entry) {
+		final DocumentReference documentReference = (DocumentReference)input.getEntry().get(entry).getResource();
+		final Patient patient = (Patient) documentReference.getSubject().getResource();
+		return patient.getIdentifier().get(0).getValue();
+	}
+
+	/**
+	 * See #1658
+	 */
+	@Test
+	public void testNarrativeLangAttributePreserved() throws IOException {
+		Observation obs = loadResource(ourCtx, Observation.class, "/resource-with-lang-in-narrative.xml");
+		String encoded = ourCtx.newXmlParser().setPrettyPrint(true).encodeResourceToString(obs);
+		assertThat(encoded, containsString("xmlns=\"http://www.w3.org/1999/xhtml\""));
+		assertThat(encoded, containsString("lang=\"en-US\""));
+		ourLog.info(encoded);
+	}
+
+	/**
+	 * Ensure that a contained bundle doesn't cause a crash
+	 */
+	@Test
+	public void testEncodeContainedBundle() {
+		String auditEvent = "<AuditEvent xmlns=\"http://hl7.org/fhir\">\n" +
+			"   <contained>\n" +
+			"      <Bundle xmlns=\"http://hl7.org/fhir\">\n" +
+			"         <id value=\"REASONS\"/>\n" +
+			"         <entry>\n" +
+			"            <resource>\n" +
+			"               <Condition xmlns=\"http://hl7.org/fhir\">\n" +
+			"                  <id value=\"123\"/>\n" +
+			"               </Condition>\n" +
+			"            </resource>\n" +
+			"         </entry>\n" +
+			"      </Bundle>\n" +
+			"   </contained>\n" +
+			"   <contained>\n" +
+			"      <MeasureReport xmlns=\"http://hl7.org/fhir\">\n" +
+			"         <id value=\"MRPT5000602611RD\"/>\n" +
+			"         <evaluatedResource>\n" +
+			"            <reference value=\"#REASONS\"/>\n" +
+			"         </evaluatedResource>\n" +
+			"      </MeasureReport>\n" +
+			"   </contained>\n" +
+			"   <entity>\n" +
+			"      <what>\n" +
+			"         <reference value=\"#MRPT5000602611RD\"/>\n" +
+			"      </what>\n" +
+			"   </entity>\n" +
+			"</AuditEvent>";
+		AuditEvent ae = ourCtx.newXmlParser().parseResource(AuditEvent.class, auditEvent);
+		String auditEventAsString = ourCtx.newXmlParser().setPrettyPrint(true).encodeResourceToString(ae);
+		assertEquals(auditEvent, auditEventAsString);
+	}
+
+
 
 }

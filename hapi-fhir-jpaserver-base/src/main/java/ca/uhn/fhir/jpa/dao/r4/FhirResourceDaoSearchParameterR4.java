@@ -1,18 +1,24 @@
 package ca.uhn.fhir.jpa.dao.r4;
 
 import ca.uhn.fhir.context.FhirContext;
-import ca.uhn.fhir.jpa.dao.BaseSearchParamExtractor;
-import ca.uhn.fhir.jpa.dao.IFhirResourceDaoSearchParameter;
-import ca.uhn.fhir.jpa.dao.IFhirSystemDao;
-import ca.uhn.fhir.jpa.entity.ResourceTable;
+import ca.uhn.fhir.context.FhirVersionEnum;
+import ca.uhn.fhir.context.RuntimeSearchParam;
+import ca.uhn.fhir.jpa.api.config.DaoConfig;
+import ca.uhn.fhir.jpa.api.dao.IFhirResourceDaoSearchParameter;
+import ca.uhn.fhir.jpa.dao.BaseHapiFhirResourceDao;
+import ca.uhn.fhir.jpa.model.entity.ResourceTable;
+import ca.uhn.fhir.jpa.searchparam.extractor.ISearchParamExtractor;
+import ca.uhn.fhir.jpa.searchparam.registry.ISearchParamRegistry;
 import ca.uhn.fhir.parser.DataFormatException;
 import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
 import ca.uhn.fhir.util.ElementUtil;
-import org.apache.commons.lang3.time.DateUtils;
+import org.hl7.fhir.instance.model.api.IBase;
+import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.instance.model.api.IPrimitiveType;
-import org.hl7.fhir.r4.model.*;
+import org.hl7.fhir.r4.model.CodeType;
+import org.hl7.fhir.r4.model.Enumerations;
+import org.hl7.fhir.r4.model.SearchParameter;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.scheduling.annotation.Scheduled;
 
 import java.util.List;
 
@@ -22,14 +28,14 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2018 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -38,10 +44,10 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
  * #L%
  */
 
-public class FhirResourceDaoSearchParameterR4 extends FhirResourceDaoR4<SearchParameter> implements IFhirResourceDaoSearchParameter<SearchParameter> {
+public class FhirResourceDaoSearchParameterR4 extends BaseHapiFhirResourceDao<SearchParameter> implements IFhirResourceDaoSearchParameter<SearchParameter> {
 
 	@Autowired
-	private IFhirSystemDao<Bundle, Meta> mySystemDao;
+	private ISearchParamExtractor mySearchParamExtractor;
 
 	protected void markAffectedResources(SearchParameter theResource) {
 		Boolean reindex = theResource != null ? CURRENTLY_REINDEXING.get(theResource) : null;
@@ -49,30 +55,6 @@ public class FhirResourceDaoSearchParameterR4 extends FhirResourceDaoR4<SearchPa
 		markResourcesMatchingExpressionAsNeedingReindexing(reindex, expression);
 	}
 
-	/**
-	 * This method is called once per minute to perform any required re-indexing. During most passes this will
-	 * just check and find that there are no resources requiring re-indexing. In that case the method just returns
-	 * immediately. If the search finds that some resources require reindexing, the system will do multiple
-	 * reindexing passes and then return.
-	 */
-	@Override
-	@Scheduled(fixedDelay = DateUtils.MILLIS_PER_MINUTE)
-	public void performReindexingPass() {
-		if (getConfig().isSchedulingDisabled()) {
-			return;
-		}
-
-		Integer count = mySystemDao.performReindexingPass(100);
-		for (int i = 0; i < 50 && count != null && count != 0; i++) {
-			count = mySystemDao.performReindexingPass(100);
-			try {
-				Thread.sleep(DateUtils.MILLIS_PER_SECOND);
-			} catch (InterruptedException e) {
-				break;
-			}
-		}
-
-	}
 
 	@Override
 	protected void postPersist(ResourceTable theEntity, SearchParameter theResource) {
@@ -98,19 +80,20 @@ public class FhirResourceDaoSearchParameterR4 extends FhirResourceDaoR4<SearchPa
 
 		Enum<?> status = theResource.getStatus();
 		List<CodeType> base = theResource.getBase();
+		String code = theResource.getCode();
 		String expression = theResource.getExpression();
 		FhirContext context = getContext();
 		Enum<?> type = theResource.getType();
-		
-		FhirResourceDaoSearchParameterR4.validateSearchParam(type, status, base, expression, context);
+
+		FhirResourceDaoSearchParameterR4.validateSearchParam(mySearchParamRegistry, mySearchParamExtractor, code, type, status, base, expression, context, getConfig());
 	}
 
-	public static void validateSearchParam(Enum<?> theType, Enum<?> theStatus, List<? extends IPrimitiveType> theBase, String theExpression, FhirContext theContext) {
+	public static void validateSearchParam(ISearchParamRegistry theSearchParamRegistry, ISearchParamExtractor theSearchParamExtractor, String theCode, Enum<?> theType, Enum<?> theStatus, List<? extends IPrimitiveType> theBase, String theExpression, FhirContext theContext, DaoConfig theDaoConfig) {
 		if (theStatus == null) {
 			throw new UnprocessableEntityException("SearchParameter.status is missing or invalid");
 		}
 
-		if (ElementUtil.isEmpty(theBase)) {
+		if (ElementUtil.isEmpty(theBase) && (theType == null || !Enumerations.SearchParamType.COMPOSITE.name().equals(theType.name()))) {
 			throw new UnprocessableEntityException("SearchParameter.base is missing");
 		}
 
@@ -126,25 +109,59 @@ public class FhirResourceDaoSearchParameterR4 extends FhirResourceDaoR4<SearchPa
 
 			theExpression = theExpression.trim();
 
-			String[] expressionSplit = BaseSearchParamExtractor.SPLIT.split(theExpression);
-			for (String nextPath : expressionSplit) {
-				nextPath = nextPath.trim();
+			if (!theContext.getVersion().getVersion().isEqualOrNewerThan(FhirVersionEnum.R4)) {
+				String[] expressionSplit = theSearchParamExtractor.split(theExpression);
+				for (String nextPath : expressionSplit) {
+					nextPath = nextPath.trim();
 
-				int dotIdx = nextPath.indexOf('.');
-				if (dotIdx == -1) {
-					throw new UnprocessableEntityException("Invalid SearchParameter.expression value \"" + nextPath + "\". Must start with a resource name");
+					int dotIdx = nextPath.indexOf('.');
+					if (dotIdx == -1) {
+						throw new UnprocessableEntityException("Invalid SearchParameter.expression value \"" + nextPath + "\". Must start with a resource name");
+					}
+
+					String resourceName = nextPath.substring(0, dotIdx);
+					try {
+						theContext.getResourceDefinition(resourceName);
+					} catch (DataFormatException e) {
+						throw new UnprocessableEntityException("Invalid SearchParameter.expression value \"" + nextPath + "\": " + e.getMessage());
+					}
+
+					if (theContext.getVersion().getVersion().isEqualOrNewerThan(FhirVersionEnum.DSTU3)) {
+						if (theDaoConfig.isValidateSearchParameterExpressionsOnSave()) {
+							IBaseResource temporaryInstance = theContext.getResourceDefinition(resourceName).newInstance();
+							try {
+								theContext.newFluentPath().evaluate(temporaryInstance, nextPath, IBase.class);
+							} catch (Exception e) {
+								String msg = theContext.getLocalizer().getMessage(FhirResourceDaoSearchParameterR4.class, "invalidSearchParamExpression", nextPath, e.getMessage());
+								throw new UnprocessableEntityException(msg, e);
+							}
+						}
+					}
 				}
 
-				String resourceName = nextPath.substring(0, dotIdx);
+			} else {
+
 				try {
-					theContext.getResourceDefinition(resourceName);
-				} catch (DataFormatException e) {
-					throw new UnprocessableEntityException("Invalid SearchParameter.expression value \"" + nextPath + "\": " + e.getMessage());
+					theContext.newFluentPath().parse(theExpression);
+				} catch (Exception e) {
+					throw new UnprocessableEntityException("Invalid SearchParameter.expression value \"" + theExpression + "\": " + e.getMessage());
 				}
 
 			}
-
 		} // if have expression
+
+		// If overriding built-in SPs is disabled on this server, make sure we aren't
+		// doing that
+		if (theDaoConfig.getModelConfig().isDefaultSearchParamsCanBeOverridden() == false) {
+			for (IPrimitiveType<?> nextBaseType : theBase) {
+				String nextBase = nextBaseType.getValueAsString();
+				RuntimeSearchParam existingSearchParam = theSearchParamRegistry.getActiveSearchParam(nextBase, theCode);
+				if (existingSearchParam != null && existingSearchParam.getId() == null) {
+					throw new UnprocessableEntityException("Can not override built-in search parameter " + nextBase + ":" + theCode + " because overriding is disabled on this server");
+				}
+			}
+		}
+
 	}
 
 }

@@ -4,14 +4,14 @@ package ca.uhn.fhir.cli;
  * #%L
  * HAPI FHIR - Command Line Client - API
  * %%
- * Copyright (C) 2014 - 2018 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -20,29 +20,26 @@ package ca.uhn.fhir.cli;
  * #L%
  */
 
-import java.io.BufferedOutputStream;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.net.SocketException;
-
-import javax.servlet.ServletContextEvent;
-import javax.servlet.ServletContextListener;
-
+import ca.uhn.fhir.jpa.api.config.DaoConfig;
+import ca.uhn.fhir.jpa.demo.ContextHolder;
+import ca.uhn.fhir.jpa.demo.FhirServerConfig;
+import ca.uhn.fhir.jpa.demo.FhirServerConfigDstu3;
+import ca.uhn.fhir.jpa.demo.FhirServerConfigR4;
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
 import org.apache.commons.io.IOUtils;
+import org.apache.commons.lang3.time.DateUtils;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.webapp.WebAppContext;
 import org.springframework.web.context.ContextLoader;
 import org.springframework.web.context.ContextLoaderListener;
 import org.springframework.web.context.support.AnnotationConfigWebApplicationContext;
 
-import ca.uhn.fhir.jpa.dao.DaoConfig;
-import ca.uhn.fhir.jpa.demo.*;
+import javax.servlet.ServletContextEvent;
+import javax.servlet.ServletContextListener;
+import java.io.*;
+import java.net.SocketException;
 
 public class RunServerCommand extends BaseCommand {
 
@@ -53,6 +50,7 @@ public class RunServerCommand extends BaseCommand {
 	private static final int DEFAULT_PORT = 8080;
 	private static final String OPTION_P = "p";
 
+	// TODO: Don't use qualified names for loggers in HAPI CLI.
 	private static final org.slf4j.Logger ourLog = org.slf4j.LoggerFactory.getLogger(RunServerCommand.class);
 	public static final String RUN_SERVER_COMMAND = "run-server";
 	private int myPort;
@@ -72,6 +70,8 @@ public class RunServerCommand extends BaseCommand {
 		options.addOption(null, OPTION_LOWMEM, false, "If this flag is set, the server will operate in low memory mode (some features disabled)");
 		options.addOption(null, OPTION_ALLOW_EXTERNAL_REFS, false, "If this flag is set, the server will allow resources to be persisted contaning external resource references");
 		options.addOption(null, OPTION_DISABLE_REFERENTIAL_INTEGRITY, false, "If this flag is set, the server will not enforce referential integrity");
+
+		addOptionalOption(options, "u", "url", "Url", "If this option is set, specifies the JDBC URL to use for the database connection");
 
 		Long defaultReuseSearchResults = DaoConfig.DEFAULT_REUSE_CACHED_SEARCH_RESULTS_FOR_MILLIS;
 		String defaultReuseSearchResultsStr = defaultReuseSearchResults == null ? "off" : String.valueOf(defaultReuseSearchResults);
@@ -107,6 +107,8 @@ public class RunServerCommand extends BaseCommand {
 			ourLog.info("Server is configured to not enforce referential integrity");
 			ContextHolder.setDisableReferentialIntegrity(true);
 		}
+
+		 ContextHolder.setDatabaseUrl(theCommandLine.getOptionValue("u"));
 
 		String reuseSearchResults = theCommandLine.getOptionValue(OPTION_REUSE_SEARCH_RESULTS_MILLIS);
 		if (reuseSearchResults != null) {
@@ -195,8 +197,21 @@ public class RunServerCommand extends BaseCommand {
 		ourLog.info("Server started on port {}", myPort);
 		ourLog.info("Web Testing UI : http://localhost:{}/", myPort);
 		ourLog.info("Server Base URL: http://localhost:{}{}", myPort, path);
-		
-		
+
+		// Never quit.. We'll let the user ctrl-C their way out.
+		loopForever();
+
+	}
+
+	@SuppressWarnings("InfiniteLoopStatement")
+	private void loopForever() {
+		while (true) {
+			try {
+				Thread.sleep(DateUtils.MILLIS_PER_MINUTE);
+			} catch (InterruptedException theE) {
+				// ignore
+			}
+		}
 	}
 
 	public static void main(String[] theArgs) {

@@ -4,9 +4,11 @@ import static org.hamcrest.Matchers.stringContainsInOrder;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertThat;
 
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.TimeUnit;
 
+import ca.uhn.fhir.test.utilities.JettyUtil;
 import org.apache.commons.io.IOUtils;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.methods.CloseableHttpResponse;
@@ -48,8 +50,8 @@ public class ReadDstu3Test {
 		ourLog.info("Response was:\n{}", responseContent);
 
 		assertEquals(200, status.getStatusLine().getStatusCode());
-		assertEquals("http://localhost:" + ourPort + "/Patient/2/_history/2", status.getFirstHeader(Constants.HEADER_LOCATION).getValue());
-		assertEquals(null, status.getFirstHeader(Constants.HEADER_CONTENT_LOCATION));
+		assertEquals(null, status.getFirstHeader(Constants.HEADER_LOCATION));
+		assertEquals("http://localhost:" + ourPort + "/Patient/2/_history/2", status.getFirstHeader(Constants.HEADER_CONTENT_LOCATION).getValue());
 
 		assertThat(responseContent, stringContainsInOrder(
 				"<Patient xmlns=\"http://hl7.org/fhir\">",
@@ -61,6 +63,131 @@ public class ReadDstu3Test {
 				"  <valueDate value=\"2011-01-01\"/>",
 				" </modifierExtension>",
 				"</Patient>"));
+	}
+
+	@Test
+	public void testInvalidQueryParamsInRead() throws Exception {
+		CloseableHttpResponse status;
+		HttpGet httpGet;
+
+		httpGet = new HttpGet("http://localhost:" + ourPort + "/Patient/2?_contained=both&_format=xml&_pretty=true");
+		status = ourClient.execute(httpGet);
+		try (InputStream inputStream = status.getEntity().getContent()) {
+			assertEquals(400, status.getStatusLine().getStatusCode());
+
+			String responseContent = IOUtils.toString(inputStream, StandardCharsets.UTF_8);
+			assertThat(responseContent, stringContainsInOrder(
+				"<OperationOutcome xmlns=\"http://hl7.org/fhir\">",
+				" <issue>",
+				"  <severity value=\"error\"/>",
+				"  <code value=\"processing\"/>",
+				"  <diagnostics value=\"Invalid query parameter(s) for this request: &quot;[_contained]&quot;\"/>",
+				" </issue>",
+				"</OperationOutcome>"
+			));
+		}
+
+		httpGet = new HttpGet("http://localhost:" + ourPort + "/Patient/2?_containedType=contained&_format=xml&_pretty=true");
+		status = ourClient.execute(httpGet);
+		try (InputStream inputStream = status.getEntity().getContent()) {
+			assertEquals(400, status.getStatusLine().getStatusCode());
+
+			String responseContent = IOUtils.toString(inputStream, StandardCharsets.UTF_8);
+			assertThat(responseContent, stringContainsInOrder(
+				"<OperationOutcome xmlns=\"http://hl7.org/fhir\">",
+				" <issue>",
+				"  <severity value=\"error\"/>",
+				"  <code value=\"processing\"/>",
+				"  <diagnostics value=\"Invalid query parameter(s) for this request: &quot;[_containedType]&quot;\"/>",
+				" </issue>",
+				"</OperationOutcome>"
+			));
+		}
+
+		httpGet = new HttpGet("http://localhost:" + ourPort + "/Patient/2?_count=10&_format=xml&_pretty=true");
+		status = ourClient.execute(httpGet);
+		try (InputStream inputStream = status.getEntity().getContent()) {
+			assertEquals(400, status.getStatusLine().getStatusCode());
+
+			String responseContent = IOUtils.toString(inputStream, StandardCharsets.UTF_8);
+			assertThat(responseContent, stringContainsInOrder(
+				"<OperationOutcome xmlns=\"http://hl7.org/fhir\">",
+				" <issue>",
+				"  <severity value=\"error\"/>",
+				"  <code value=\"processing\"/>",
+				"  <diagnostics value=\"Invalid query parameter(s) for this request: &quot;[_count]&quot;\"/>",
+				" </issue>",
+				"</OperationOutcome>"
+			));
+		}
+
+		httpGet = new HttpGet("http://localhost:" + ourPort + "/Patient/2?_include=Patient:organization&_format=xml&_pretty=true");
+		status = ourClient.execute(httpGet);
+		try (InputStream inputStream = status.getEntity().getContent()) {
+			assertEquals(400, status.getStatusLine().getStatusCode());
+
+			String responseContent = IOUtils.toString(inputStream, StandardCharsets.UTF_8);
+			assertThat(responseContent, stringContainsInOrder(
+				"<OperationOutcome xmlns=\"http://hl7.org/fhir\">",
+				" <issue>",
+				"  <severity value=\"error\"/>",
+				"  <code value=\"processing\"/>",
+				"  <diagnostics value=\"Invalid query parameter(s) for this request: &quot;[_include]&quot;\"/>",
+				" </issue>",
+				"</OperationOutcome>"
+			));
+		}
+
+		httpGet = new HttpGet("http://localhost:" + ourPort + "/Patient/2?_revinclude=Provenance:target&_format=xml&_pretty=true");
+		status = ourClient.execute(httpGet);
+		try (InputStream inputStream = status.getEntity().getContent()) {
+			assertEquals(400, status.getStatusLine().getStatusCode());
+
+			String responseContent = IOUtils.toString(inputStream, StandardCharsets.UTF_8);
+			assertThat(responseContent, stringContainsInOrder(
+				"<OperationOutcome xmlns=\"http://hl7.org/fhir\">",
+				" <issue>",
+				"  <severity value=\"error\"/>",
+				"  <code value=\"processing\"/>",
+				"  <diagnostics value=\"Invalid query parameter(s) for this request: &quot;[_revinclude]&quot;\"/>",
+				" </issue>",
+				"</OperationOutcome>"
+			));
+		}
+
+		httpGet = new HttpGet("http://localhost:" + ourPort + "/Patient/2?_sort=family&_format=xml&_pretty=true");
+		status = ourClient.execute(httpGet);
+		try (InputStream inputStream = status.getEntity().getContent()) {
+			assertEquals(400, status.getStatusLine().getStatusCode());
+
+			String responseContent = IOUtils.toString(inputStream, StandardCharsets.UTF_8);
+			assertThat(responseContent, stringContainsInOrder(
+				"<OperationOutcome xmlns=\"http://hl7.org/fhir\">",
+				" <issue>",
+				"  <severity value=\"error\"/>",
+				"  <code value=\"processing\"/>",
+				"  <diagnostics value=\"Invalid query parameter(s) for this request: &quot;[_sort]&quot;\"/>",
+				" </issue>",
+				"</OperationOutcome>"
+			));
+		}
+
+		httpGet = new HttpGet("http://localhost:" + ourPort + "/Patient/2?_total=accurate&_format=xml&_pretty=true");
+		status = ourClient.execute(httpGet);
+		try (InputStream inputStream = status.getEntity().getContent()) {
+			assertEquals(400, status.getStatusLine().getStatusCode());
+
+			String responseContent = IOUtils.toString(inputStream, StandardCharsets.UTF_8);
+			assertThat(responseContent, stringContainsInOrder(
+				"<OperationOutcome xmlns=\"http://hl7.org/fhir\">",
+				" <issue>",
+				"  <severity value=\"error\"/>",
+				"  <code value=\"processing\"/>",
+				"  <diagnostics value=\"Invalid query parameter(s) for this request: &quot;[_total]&quot;\"/>",
+				" </issue>",
+				"</OperationOutcome>"
+			));
+		}
 	}
 
 	@Test
@@ -109,14 +236,13 @@ public class ReadDstu3Test {
 
 	@AfterClass
 	public static void afterClassClearContext() throws Exception {
-		ourServer.stop();
+		JettyUtil.closeServer(ourServer);
 		TestUtil.clearAllStaticFieldsForUnitTest();
 	}
 
 	@BeforeClass
 	public static void beforeClass() throws Exception {
-		ourPort = PortUtil.findFreePort();
-		ourServer = new Server(ourPort);
+		ourServer = new Server(0);
 
 		PatientProvider patientProvider = new PatientProvider();
 
@@ -127,7 +253,8 @@ public class ReadDstu3Test {
 		ServletHolder servletHolder = new ServletHolder(servlet);
 		proxyHandler.addServletWithMapping(servletHolder, "/*");
 		ourServer.setHandler(proxyHandler);
-		ourServer.start();
+		JettyUtil.startServer(ourServer);
+        ourPort = JettyUtil.getPortForStartedServer(ourServer);
 
 		PoolingHttpClientConnectionManager connectionManager = new PoolingHttpClientConnectionManager(5000, TimeUnit.MILLISECONDS);
 		HttpClientBuilder builder = HttpClientBuilder.create();

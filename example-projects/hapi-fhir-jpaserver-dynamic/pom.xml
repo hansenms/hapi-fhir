@@ -10,8 +10,8 @@
 	<parent>
 		<groupId>ca.uhn.hapi.fhir</groupId>
 		<artifactId>hapi-fhir</artifactId>
-		<version>3.4.0-SNAPSHOT</version>
-	   <relativePath>../pom.xml</relativePath>
+		<version>4.0.0-SNAPSHOT</version>
+	   <relativePath>../../pom.xml</relativePath>
 	</parent>
 
 	<artifactId>hapi-fhir-jpaserver-dynamic</artifactId>
@@ -165,6 +165,14 @@
 			<groupId>org.apache.derby</groupId>
 			<artifactId>derbyclient</artifactId>
 		</dependency>
+		<!--		<dependency>
+			<groupId>org.apache.derby</groupId>
+			<artifactId>derbyshared</artifactId>
+		</dependency>
+		<dependency>
+			<groupId>org.apache.derby</groupId>
+			<artifactId>derbytools</artifactId>
+		</dependency> -->
 
 		<!-- The following dependencies are only needed for automated unit tests, you do not neccesarily need them to run the example. -->
 		<dependency>
@@ -198,8 +206,14 @@
 			<scope>test</scope>
 		</dependency>
 		<dependency>
-			<groupId>com.phloc</groupId>
-			<artifactId>phloc-schematron</artifactId>
+			<groupId>ca.uhn.hapi.fhir</groupId>
+			<artifactId>hapi-fhir-test-utilities</artifactId>
+			<version>${project.version}</version>
+			<scope>test</scope>
+		</dependency>
+		<dependency>
+			<groupId>com.helger</groupId>
+			<artifactId>ph-schematron</artifactId>
 			<exclusions>
 				<exclusion>
 					<artifactId>Saxon-HE</artifactId>

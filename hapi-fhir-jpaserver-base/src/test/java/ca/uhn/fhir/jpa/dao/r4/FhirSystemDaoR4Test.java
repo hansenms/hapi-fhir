@@ -1,21 +1,21 @@
 package ca.uhn.fhir.jpa.dao.r4;
 
 import ca.uhn.fhir.jpa.dao.BaseHapiFhirDao;
-import ca.uhn.fhir.jpa.dao.DaoConfig;
-import ca.uhn.fhir.jpa.dao.SearchParameterMap;
-import ca.uhn.fhir.jpa.entity.*;
+import ca.uhn.fhir.jpa.api.config.DaoConfig;
+import ca.uhn.fhir.jpa.model.entity.*;
 import ca.uhn.fhir.jpa.provider.SystemProviderDstu2Test;
+import ca.uhn.fhir.jpa.searchparam.SearchParameterMap;
 import ca.uhn.fhir.model.api.ResourceMetadataKeyEnum;
 import ca.uhn.fhir.model.primitive.IdDt;
 import ca.uhn.fhir.rest.api.Constants;
-import ca.uhn.fhir.rest.api.RestOperationTypeEnum;
 import ca.uhn.fhir.rest.api.server.IBundleProvider;
 import ca.uhn.fhir.rest.param.ReferenceParam;
+import ca.uhn.fhir.rest.param.StringParam;
 import ca.uhn.fhir.rest.param.TokenParam;
 import ca.uhn.fhir.rest.server.exceptions.*;
-import ca.uhn.fhir.rest.server.interceptor.IServerInterceptor.ActionRequestDetails;
 import ca.uhn.fhir.util.TestUtil;
 import org.apache.commons.io.IOUtils;
+import org.hamcrest.Matchers;
 import org.hl7.fhir.instance.model.api.IAnyResource;
 import org.hl7.fhir.instance.model.api.IIdType;
 import org.hl7.fhir.r4.model.*;
@@ -23,7 +23,6 @@ import org.hl7.fhir.r4.model.Bundle.*;
 import org.hl7.fhir.r4.model.Observation.ObservationStatus;
 import org.hl7.fhir.r4.model.OperationOutcome.IssueSeverity;
 import org.junit.*;
-import org.mockito.ArgumentCaptor;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionCallback;
@@ -35,16 +34,11 @@ import java.io.InputStream;
 import java.io.UnsupportedEncodingException;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
+import java.util.stream.Collectors;
 
 import static org.hamcrest.Matchers.*;
 import static org.junit.Assert.*;
-import static org.mockito.Matchers.eq;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
 
 public class FhirSystemDaoR4Test extends BaseJpaR4SystemTest {
 
@@ -58,6 +52,7 @@ public class FhirSystemDaoR4Test extends BaseJpaR4SystemTest {
 
 	@Before
 	public void beforeDisableResultReuse() {
+		myInterceptorRegistry.registerInterceptor(myInterceptor);
 		myDaoConfig.setReuseCachedSearchResultsForMillis(null);
 	}
 
@@ -171,6 +166,69 @@ public class FhirSystemDaoR4Test extends BaseJpaR4SystemTest {
 	}
 
 	@Test
+	public void testTransactionReSavesPreviouslyDeletedResources() {
+
+		{
+			Bundle input = new Bundle();
+			input.setType(BundleType.TRANSACTION);
+
+			Patient pt = new Patient();
+			pt.setId("pt");
+			pt.setActive(true);
+			input
+				.addEntry()
+				.setResource(pt)
+				.getRequest()
+				.setUrl("Patient/pt")
+				.setMethod(HTTPVerb.PUT);
+
+			Observation obs = new Observation();
+			obs.setId("obs");
+			obs.getSubject().setReference("Patient/pt");
+			input
+				.addEntry()
+				.setResource(obs)
+				.getRequest()
+				.setUrl("Observation/obs")
+				.setMethod(HTTPVerb.PUT);
+
+			mySystemDao.transaction(null, input);
+		}
+
+		myObservationDao.delete(new IdType("Observation/obs"));
+		myPatientDao.delete(new IdType("Patient/pt"));
+
+		{
+			Bundle input = new Bundle();
+			input.setType(BundleType.TRANSACTION);
+
+			Patient pt = new Patient();
+			pt.setId("pt");
+			pt.setActive(true);
+			input
+				.addEntry()
+				.setResource(pt)
+				.getRequest()
+				.setUrl("Patient/pt")
+				.setMethod(HTTPVerb.PUT);
+
+			Observation obs = new Observation();
+			obs.setId("obs");
+			obs.getSubject().setReference("Patient/pt");
+			input
+				.addEntry()
+				.setResource(obs)
+				.getRequest()
+				.setUrl("Observation/obs")
+				.setMethod(HTTPVerb.PUT);
+
+			mySystemDao.transaction(null, input);
+		}
+
+		myPatientDao.read(new IdType("Patient/pt"));
+	}
+
+	@Test
 	public void testResourceCounts() {
 		Patient p = new Patient();
 		p.setActive(true);
@@ -186,7 +244,6 @@ public class FhirSystemDaoR4Test extends BaseJpaR4SystemTest {
 		assertEquals(null, counts.get("Organization"));
 
 	}
-
 
 	@Test
 	public void testBatchCreateWithBadRead() {
@@ -268,7 +325,7 @@ public class FhirSystemDaoR4Test extends BaseJpaR4SystemTest {
 		ep.setId(IdType.newRandomUuid());
 
 		enc.getEpisodeOfCareFirstRep().setReference(ep.getId());
-		cond.getContext().setReference(enc.getId());
+		cond.getEncounter().setReference(enc.getId());
 		ep.getDiagnosisFirstRep().getCondition().setReference(cond.getId());
 
 		Bundle inputBundle = new Bundle();
@@ -353,44 +410,6 @@ public class FhirSystemDaoR4Test extends BaseJpaR4SystemTest {
 	}
 
 	@Test
-	public void testDeleteWithHas() {
-		Observation obs1 = new Observation();
-		obs1.setStatus(ObservationStatus.FINAL);
-		IIdType obs1id = myObservationDao.create(obs1).getId().toUnqualifiedVersionless();
-
-		Observation obs2 = new Observation();
-		obs2.setStatus(ObservationStatus.FINAL);
-		IIdType obs2id = myObservationDao.create(obs2).getId().toUnqualifiedVersionless();
-
-		DiagnosticReport rpt = new DiagnosticReport();
-		rpt.addIdentifier().setSystem("foo").setValue("IDENTIFIER");
-		rpt.addResult(new Reference(obs2id));
-		IIdType rptId = myDiagnosticReportDao.create(rpt).getId().toUnqualifiedVersionless();
-
-		myObservationDao.read(obs1id);
-		myObservationDao.read(obs2id);
-
-		rpt = new DiagnosticReport();
-		rpt.addIdentifier().setSystem("foo").setValue("IDENTIFIER");
-
-		Bundle b = new Bundle();
-		b.addEntry().getRequest().setMethod(HTTPVerb.DELETE).setUrl("Observation?_has:DiagnosticReport:result:identifier=foo|IDENTIFIER");
-		b.addEntry().setResource(rpt).getRequest().setMethod(HTTPVerb.PUT).setUrl("DiagnosticReport?identifier=foo|IDENTIFIER");
-		mySystemDao.transaction(mySrd, b);
-
-		myObservationDao.read(obs1id);
-		try {
-			myObservationDao.read(obs2id);
-			fail();
-		} catch (ResourceGoneException e) {
-			// good
-		}
-
-		rpt = myDiagnosticReportDao.read(rptId);
-		assertThat(rpt.getResult(), empty());
-	}
-
-	@Test
 	public void testMultipleUpdatesWithNoChangesDoesNotResultInAnUpdateForTransaction() {
 		Bundle bundle;
 
@@ -456,80 +475,189 @@ public class FhirSystemDaoR4Test extends BaseJpaR4SystemTest {
 	}
 
 	@Test
-	public void testReindexing() {
+	public void testReindexing() throws InterruptedException {
 		Patient p = new Patient();
 		p.addName().setFamily("family");
 		final IIdType id = myPatientDao.create(p, mySrd).getId().toUnqualified();
+
+		sleepUntilTimeChanges();
 
 		ValueSet vs = new ValueSet();
 		vs.setUrl("http://foo");
 		myValueSetDao.create(vs, mySrd);
 
-		ResourceTable entity = new TransactionTemplate(myTxManager).execute(new TransactionCallback<ResourceTable>() {
-			@Override
-			public ResourceTable doInTransaction(TransactionStatus theStatus) {
-				return myEntityManager.find(ResourceTable.class, id.getIdPartAsLong());
-			}
-		});
+		sleepUntilTimeChanges();
+		
+		ResourceTable entity = new TransactionTemplate(myTxManager).execute(t -> myEntityManager.find(ResourceTable.class, id.getIdPartAsLong()));
 		assertEquals(Long.valueOf(1), entity.getIndexStatus());
 
-		mySystemDao.markAllResourcesForReindexing();
+		Long jobId = myResourceReindexingSvc.markAllResourcesForReindexing();
+		myResourceReindexingSvc.forceReindexingPass();
 
-		entity = new TransactionTemplate(myTxManager).execute(new TransactionCallback<ResourceTable>() {
-			@Override
-			public ResourceTable doInTransaction(TransactionStatus theStatus) {
-				return myEntityManager.find(ResourceTable.class, id.getIdPartAsLong());
-			}
-		});
-		assertEquals(null, entity.getIndexStatus());
-
-		mySystemDao.performReindexingPass(null);
-
-		entity = new TransactionTemplate(myTxManager).execute(new TransactionCallback<ResourceTable>() {
-			@Override
-			public ResourceTable doInTransaction(TransactionStatus theStatus) {
-				return myEntityManager.find(ResourceTable.class, id.getIdPartAsLong());
-			}
-		});
+		entity = new TransactionTemplate(myTxManager).execute(t -> myEntityManager.find(ResourceTable.class, id.getIdPartAsLong()));
 		assertEquals(Long.valueOf(1), entity.getIndexStatus());
 
 		// Just make sure this doesn't cause a choke
-		mySystemDao.performReindexingPass(100000);
+		myResourceReindexingSvc.forceReindexingPass();
+
+		/*
+		 * We expect a final reindex count of 3 because there are 2 resources to
+		 * reindex and the final pass uses the most recent time as the low threshold,
+		 * so it indexes the newest resource one more time. It wouldn't be a big deal
+		 * if this ever got fixed so that it ends up with 2 instead of 3.
+		 */
+		runInTransaction(()->{
+			Optional<Integer> reindexCount = myResourceReindexJobDao.getReindexCount(jobId);
+			assertEquals(3, reindexCount.orElseThrow(()->new NullPointerException("No job " + jobId)).intValue());
+		});
 
 		// Try making the resource unparseable
 
 		TransactionTemplate template = new TransactionTemplate(myTxManager);
 		template.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-		template.execute(new TransactionCallback<ResourceTable>() {
-			@Override
-			public ResourceTable doInTransaction(TransactionStatus theStatus) {
-				ResourceHistoryTable resourceHistoryTable = myResourceHistoryTableDao.findForIdAndVersion(id.getIdPartAsLong(), id.getVersionIdPartAsLong());
-				resourceHistoryTable.setEncoding(ResourceEncodingEnum.JSON);
-				try {
-					resourceHistoryTable.setResource("{\"resourceType\":\"FOO\"}".getBytes("UTF-8"));
-				} catch (UnsupportedEncodingException e) {
-					throw new Error(e);
-				}
-				myResourceHistoryTableDao.save(resourceHistoryTable);
-
-				ResourceTable table = myResourceTableDao.findOne(id.getIdPartAsLong());
-				table.setIndexStatus(null);
-				myResourceTableDao.save(table);
-
-				return null;
+		template.execute((TransactionCallback<ResourceTable>) t -> {
+			ResourceHistoryTable resourceHistoryTable = myResourceHistoryTableDao.findForIdAndVersionAndFetchProvenance(id.getIdPartAsLong(), id.getVersionIdPartAsLong());
+			resourceHistoryTable.setEncoding(ResourceEncodingEnum.JSON);
+			try {
+				resourceHistoryTable.setResource("{\"resourceType\":\"FOO\"}".getBytes("UTF-8"));
+			} catch (UnsupportedEncodingException e) {
+				throw new Error(e);
 			}
+			myResourceHistoryTableDao.save(resourceHistoryTable);
+
+			ResourceTable table = myResourceTableDao.findById(id.getIdPartAsLong()).orElseThrow(IllegalStateException::new);
+			table.setIndexStatus(null);
+			myResourceTableDao.save(table);
+
+			return null;
 		});
 
-		mySystemDao.performReindexingPass(null);
+		myResourceReindexingSvc.markAllResourcesForReindexing();
+		myResourceReindexingSvc.forceReindexingPass();
 
-		entity = new TransactionTemplate(myTxManager).execute(new TransactionCallback<ResourceTable>() {
-			@Override
-			public ResourceTable doInTransaction(TransactionStatus theStatus) {
-				return myEntityManager.find(ResourceTable.class, id.getIdPartAsLong());
-			}
-		});
+		entity = new TransactionTemplate(myTxManager).execute(theStatus -> myEntityManager.find(ResourceTable.class, id.getIdPartAsLong()));
 		assertEquals(Long.valueOf(2), entity.getIndexStatus());
 
+	}
+
+	@Test
+	public void testReindexingCurrentVersionDeleted() {
+		Patient p = new Patient();
+		p.addName().setFamily("family1");
+		final IIdType id = myPatientDao.create(p, mySrd).getId().toUnqualifiedVersionless();
+
+		p = new Patient();
+		p.setId(id.getValue());
+		p.addName().setFamily("family1");
+		p.addName().setFamily("family2");
+		myPatientDao.update(p);
+
+		p = new Patient();
+		p.setId(id.getValue());
+		p.addName().setFamily("family1");
+		p.addName().setFamily("family2");
+		p.addName().setFamily("family3");
+		myPatientDao.update(p);
+
+		SearchParameterMap searchParamMap = new SearchParameterMap();
+		searchParamMap.setLoadSynchronous(true);
+		searchParamMap.add(Patient.SP_FAMILY, new StringParam("family2"));
+		assertEquals(1, myPatientDao.search(searchParamMap).size().intValue());
+
+		runInTransaction(()->{
+			ResourceHistoryTable historyEntry = myResourceHistoryTableDao.findForIdAndVersionAndFetchProvenance(id.getIdPartAsLong(), 3);
+			assertNotNull(historyEntry);
+			myResourceHistoryTableDao.delete(historyEntry);
+		});
+
+		Long jobId = myResourceReindexingSvc.markAllResourcesForReindexing();
+		myResourceReindexingSvc.forceReindexingPass();
+
+		searchParamMap = new SearchParameterMap();
+		searchParamMap.setLoadSynchronous(true);
+		searchParamMap.add(Patient.SP_FAMILY, new StringParam("family2"));
+		IBundleProvider search = myPatientDao.search(searchParamMap);
+		assertEquals(1, search.size().intValue());
+		p = (Patient) search.getResources(0, 1).get(0);
+		assertEquals("3", p.getIdElement().getVersionIdPart());
+	}
+
+
+	@Test
+	public void testReindexingSingleStringHashValueIsDeleted() {
+		Patient p = new Patient();
+		p.addName().setFamily("family1");
+		final IIdType id = myPatientDao.create(p, mySrd).getId().toUnqualifiedVersionless();
+
+		SearchParameterMap searchParamMap = new SearchParameterMap();
+		searchParamMap.setLoadSynchronous(true);
+		searchParamMap.add(Patient.SP_FAMILY, new StringParam("family1"));
+		assertEquals(1, myPatientDao.search(searchParamMap).size().intValue());
+
+		runInTransaction(()->{
+			myEntityManager
+				.createQuery("UPDATE ResourceIndexedSearchParamString s SET s.myHashNormalizedPrefix = 0")
+				.executeUpdate();
+		});
+
+		myCaptureQueriesListener.clear();
+		Integer found = myPatientDao.search(searchParamMap).size();
+		myCaptureQueriesListener.logSelectQueriesForCurrentThread();
+
+		assertEquals(0, found.intValue());
+
+		myResourceReindexingSvc.markAllResourcesForReindexing();
+		myResourceReindexingSvc.forceReindexingPass();
+
+		runInTransaction(()->{
+			ResourceIndexedSearchParamString param = myResourceIndexedSearchParamStringDao.findAll()
+				.stream()
+				.filter(t -> t.getParamName().equals("family"))
+				.findFirst()
+				.orElseThrow(() -> new IllegalArgumentException());
+			assertEquals(-6332913947530887803L, param.getHashNormalizedPrefix().longValue());
+		});
+
+		assertEquals(1, myPatientDao.search(searchParamMap).size().intValue());
+	}
+
+	@Test
+	public void testReindexingSingleStringHashIdentityValueIsDeleted() {
+		Patient p = new Patient();
+		p.addName().setFamily("family1");
+		final IIdType id = myPatientDao.create(p, mySrd).getId().toUnqualifiedVersionless();
+
+		SearchParameterMap searchParamMap = new SearchParameterMap();
+		searchParamMap.setLoadSynchronous(true);
+		searchParamMap.add(Patient.SP_FAMILY, new StringParam("family1"));
+		assertEquals(1, myPatientDao.search(searchParamMap).size().intValue());
+
+		runInTransaction(()->{
+			Long i = myEntityManager
+				.createQuery("SELECT count(s) FROM ResourceIndexedSearchParamString s WHERE s.myHashIdentity = 0", Long.class)
+				.getSingleResult();
+			assertEquals(0L, i.longValue());
+
+			myEntityManager
+				.createQuery("UPDATE ResourceIndexedSearchParamString s SET s.myHashIdentity = 0")
+				.executeUpdate();
+
+			i = myEntityManager
+				.createQuery("SELECT count(s) FROM ResourceIndexedSearchParamString s WHERE s.myHashIdentity = 0", Long.class)
+				.getSingleResult();
+			assertThat(i, greaterThan(1L));
+
+		});
+
+		myResourceReindexingSvc.markAllResourcesForReindexing();
+		myResourceReindexingSvc.forceReindexingPass();
+
+		runInTransaction(()->{
+			Long i = myEntityManager
+				.createQuery("SELECT count(s) FROM ResourceIndexedSearchParamString s WHERE s.myHashIdentity = 0", Long.class)
+				.getSingleResult();
+			assertEquals(0L, i.longValue());
+		});
 	}
 
 	@Test
@@ -682,6 +810,99 @@ public class FhirSystemDaoR4Test extends BaseJpaR4SystemTest {
 	}
 
 	@Test
+	public void testTransactionMissingResourceForPost() {
+		Bundle request = new Bundle();
+		request.setType(BundleType.TRANSACTION);
+		request
+			.addEntry()
+			.setFullUrl("Patient/")
+			.getRequest()
+			.setMethod(HTTPVerb.POST)
+			.setUrl("Patient/");
+
+		try {
+			mySystemDao.transaction(mySrd, request);
+			fail();
+		} catch (InvalidRequestException e) {
+			assertEquals("Missing required resource in Bundle.entry[0].resource for operation POST", e.getMessage());
+		}
+	}
+
+	@Test
+	public void testTransactionMissingResourceForPut() {
+		Bundle request = new Bundle();
+		request.setType(BundleType.TRANSACTION);
+		request
+			.addEntry()
+			.setFullUrl("Patient/123")
+			.getRequest()
+			.setMethod(HTTPVerb.PUT)
+			.setUrl("Patient/123");
+
+		try {
+			mySystemDao.transaction(mySrd, request);
+			fail();
+		} catch (InvalidRequestException e) {
+			assertEquals("Missing required resource in Bundle.entry[0].resource for operation PUT", e.getMessage());
+		}
+	}
+
+	@Test
+	public void testBatchMissingResourceForPost() {
+		Bundle request = new Bundle();
+		request.setType(BundleType.BATCH);
+		request
+			.addEntry()
+			.setFullUrl("Patient/")
+			.getRequest()
+			.setMethod(HTTPVerb.POST)
+			.setUrl("Patient/");
+
+		Bundle outcome = mySystemDao.transaction(mySrd, request);
+		ourLog.info(myFhirCtx.newJsonParser().setPrettyPrint(true).encodeResourceToString(outcome));
+		assertEquals("400 Bad Request", outcome.getEntry().get(0).getResponse().getStatus());
+		assertEquals(IssueSeverity.ERROR, ((OperationOutcome)outcome.getEntry().get(0).getResponse().getOutcome()).getIssueFirstRep().getSeverity());
+		assertEquals("Missing required resource in Bundle.entry[0].resource for operation POST", ((OperationOutcome)outcome.getEntry().get(0).getResponse().getOutcome()).getIssueFirstRep().getDiagnostics());
+		validate(outcome);
+	}
+
+	@Test
+	public void testBatchMissingResourceForPut() {
+		Bundle request = new Bundle();
+		request.setType(BundleType.BATCH);
+		request
+			.addEntry()
+			.setFullUrl("Patient/123")
+			.getRequest()
+			.setMethod(HTTPVerb.PUT)
+			.setUrl("Patient/123");
+
+		Bundle outcome = mySystemDao.transaction(mySrd, request);
+		ourLog.info(myFhirCtx.newJsonParser().setPrettyPrint(true).encodeResourceToString(outcome));
+		assertEquals("400 Bad Request", outcome.getEntry().get(0).getResponse().getStatus());
+		assertEquals(IssueSeverity.ERROR, ((OperationOutcome)outcome.getEntry().get(0).getResponse().getOutcome()).getIssueFirstRep().getSeverity());
+		assertEquals("Missing required resource in Bundle.entry[0].resource for operation PUT", ((OperationOutcome)outcome.getEntry().get(0).getResponse().getOutcome()).getIssueFirstRep().getDiagnostics());
+		validate(outcome);
+	}
+
+	@Test
+	public void testBatchMissingUrlForPost() {
+		Bundle request = new Bundle();
+		request.setType(BundleType.BATCH);
+		request
+			.addEntry()
+			.setResource(new Patient().setActive(true))
+			.getRequest()
+			.setMethod(HTTPVerb.POST);
+
+		Bundle outcome = mySystemDao.transaction(mySrd, request);
+		ourLog.info(myFhirCtx.newJsonParser().setPrettyPrint(true).encodeResourceToString(outcome));
+		assertEquals("201 Created", outcome.getEntry().get(0).getResponse().getStatus());
+		validate(outcome);
+	}
+
+
+	@Test
 	public void testTransactionCreateInlineMatchUrlWithOneMatch() {
 		String methodName = "testTransactionCreateInlineMatchUrlWithOneMatch";
 		Bundle request = new Bundle();
@@ -778,6 +999,7 @@ public class FhirSystemDaoR4Test extends BaseJpaR4SystemTest {
 
 	}
 
+
 	@Test
 	public void testTransactionCreateInlineMatchUrlWithOneMatchLastUpdated() {
 		Bundle request = new Bundle();
@@ -811,6 +1033,183 @@ public class FhirSystemDaoR4Test extends BaseJpaR4SystemTest {
 		assertEquals("1", respEntry.getResponse().getEtag());
 
 	}
+
+	@Test
+	public void testTransactionWithDuplicateConditionalCreates() {
+		Bundle request = new Bundle();
+		request.setType(BundleType.TRANSACTION);
+
+		Practitioner p = new Practitioner();
+		p.setId(IdType.newRandomUuid());
+		p.addIdentifier().setSystem("http://foo").setValue("bar");
+		request.addEntry()
+			.setFullUrl(p.getId())
+			.setResource(p)
+			.getRequest()
+			.setMethod(HTTPVerb.POST)
+			.setUrl("Practitioner/")
+			.setIfNoneExist("Practitioner?identifier=http://foo|bar");
+
+		Observation o = new Observation();
+		o.setId(IdType.newRandomUuid());
+		o.getPerformerFirstRep().setReference(p.getId());
+		request.addEntry()
+			.setFullUrl(o.getId())
+			.setResource(o)
+			.getRequest()
+			.setMethod(HTTPVerb.POST)
+			.setUrl("Observation/");
+
+		p = new Practitioner();
+		p.setId(IdType.newRandomUuid());
+		p.addIdentifier().setSystem("http://foo").setValue("bar");
+		request.addEntry()
+			.setFullUrl(p.getId())
+			.setResource(p)
+			.getRequest()
+			.setMethod(HTTPVerb.POST)
+			.setUrl("Practitioner/")
+			.setIfNoneExist("Practitioner?identifier=http://foo|bar");
+
+		o = new Observation();
+		o.setId(IdType.newRandomUuid());
+		o.getPerformerFirstRep().setReference(p.getId());
+		request.addEntry()
+			.setFullUrl(o.getId())
+			.setResource(o)
+			.getRequest()
+			.setMethod(HTTPVerb.POST)
+			.setUrl("Observation/");
+
+		Bundle response = mySystemDao.transaction(null, request);
+
+		ourLog.info("Response:\n{}", myFhirCtx.newJsonParser().setPrettyPrint(true).encodeResourceToString(response));
+
+		List<String> responseTypes = response
+			.getEntry()
+			.stream()
+			.map(t -> new IdType(t.getResponse().getLocation()).getResourceType())
+			.collect(Collectors.toList());
+		assertThat(responseTypes.toString(), responseTypes, contains("Practitioner", "Observation", "Observation"));
+	}
+
+
+	@Test
+	public void testTransactionWithDuplicateConditionalCreatesWithResourceLinkReference() {
+		Bundle request = new Bundle();
+		request.setType(BundleType.TRANSACTION);
+
+		Practitioner p = new Practitioner();
+		p.setId(IdType.newRandomUuid());
+		p.addIdentifier().setSystem("http://foo").setValue("bar");
+		request.addEntry()
+			.setFullUrl(p.getId())
+			.setResource(p)
+			.getRequest()
+			.setMethod(HTTPVerb.POST)
+			.setUrl("Practitioner/")
+			.setIfNoneExist("Practitioner?identifier=http://foo|bar");
+
+		Observation o = new Observation();
+		o.setId(IdType.newRandomUuid());
+		o.getPerformerFirstRep().setResource(p);
+		request.addEntry()
+			.setFullUrl(o.getId())
+			.setResource(o)
+			.getRequest()
+			.setMethod(HTTPVerb.POST)
+			.setUrl("Observation/");
+
+		p = new Practitioner();
+		p.setId(IdType.newRandomUuid());
+		p.addIdentifier().setSystem("http://foo").setValue("bar");
+		request.addEntry()
+			.setFullUrl(p.getId())
+			.setResource(p)
+			.getRequest()
+			.setMethod(HTTPVerb.POST)
+			.setUrl("Practitioner/")
+			.setIfNoneExist("Practitioner?identifier=http://foo|bar");
+
+		o = new Observation();
+		o.setId(IdType.newRandomUuid());
+		o.getPerformerFirstRep().setResource(p);
+		request.addEntry()
+			.setFullUrl(o.getId())
+			.setResource(o)
+			.getRequest()
+			.setMethod(HTTPVerb.POST)
+			.setUrl("Observation/");
+
+		Bundle response = mySystemDao.transaction(null, request);
+
+		ourLog.info("Response:\n{}", myFhirCtx.newJsonParser().setPrettyPrint(true).encodeResourceToString(response));
+
+		List<String> responseTypes = response
+			.getEntry()
+			.stream()
+			.map(t -> new IdType(t.getResponse().getLocation()).getResourceType())
+			.collect(Collectors.toList());
+		assertThat(responseTypes.toString(), responseTypes, contains("Practitioner", "Observation", "Observation"));
+	}
+
+	@Test
+	public void testTransactionWithDuplicateConditionalUpdates() {
+		Bundle request = new Bundle();
+		request.setType(BundleType.TRANSACTION);
+
+		Practitioner p = new Practitioner();
+		p.setId(IdType.newRandomUuid());
+		p.addIdentifier().setSystem("http://foo").setValue("bar");
+		request.addEntry()
+			.setFullUrl(p.getId())
+			.setResource(p)
+			.getRequest()
+			.setMethod(HTTPVerb.PUT)
+			.setUrl("Practitioner?identifier=http://foo|bar");
+
+		Observation o = new Observation();
+		o.setId(IdType.newRandomUuid());
+		o.getPerformerFirstRep().setReference(p.getId());
+		request.addEntry()
+			.setFullUrl(o.getId())
+			.setResource(o)
+			.getRequest()
+			.setMethod(HTTPVerb.POST)
+			.setUrl("Observation/");
+
+		p = new Practitioner();
+		p.setId(IdType.newRandomUuid());
+		p.addIdentifier().setSystem("http://foo").setValue("bar");
+		request.addEntry()
+			.setFullUrl(p.getId())
+			.setResource(p)
+			.getRequest()
+			.setMethod(HTTPVerb.PUT)
+			.setUrl("Practitioner?identifier=http://foo|bar");
+
+		o = new Observation();
+		o.setId(IdType.newRandomUuid());
+		o.getPerformerFirstRep().setReference(p.getId());
+		request.addEntry()
+			.setFullUrl(o.getId())
+			.setResource(o)
+			.getRequest()
+			.setMethod(HTTPVerb.POST)
+			.setUrl("Observation/");
+
+		Bundle response = mySystemDao.transaction(null, request);
+
+		ourLog.info("Response:\n{}", myFhirCtx.newJsonParser().setPrettyPrint(true).encodeResourceToString(response));
+
+		List<String> responseTypes = response
+			.getEntry()
+			.stream()
+			.map(t -> new IdType(t.getResponse().getLocation()).getResourceType())
+			.collect(Collectors.toList());
+		assertThat(responseTypes.toString(), responseTypes, contains("Practitioner", "Observation", "Observation"));
+	}
+
 
 	@Test
 	public void testTransactionCreateInlineMatchUrlWithTwoMatches() {
@@ -971,22 +1370,6 @@ public class FhirSystemDaoR4Test extends BaseJpaR4SystemTest {
 		assertEquals(Constants.STATUS_HTTP_201_CREATED + " Created", respEntry.getResponse().getStatus());
 		String patientId = respEntry.getResponse().getLocation();
 		assertThat(patientId, not(containsString("test")));
-
-		/*
-		 * Interceptor should have been called once for the transaction, and once for the embedded operation
-		 */
-		ArgumentCaptor<ActionRequestDetails> detailsCapt = ArgumentCaptor.forClass(ActionRequestDetails.class);
-		verify(myInterceptor).incomingRequestPreHandled(eq(RestOperationTypeEnum.TRANSACTION), detailsCapt.capture());
-		ActionRequestDetails details = detailsCapt.getValue();
-		assertEquals("Bundle", details.getResourceType());
-		assertEquals(Bundle.class, details.getResource().getClass());
-
-		detailsCapt = ArgumentCaptor.forClass(ActionRequestDetails.class);
-		verify(myInterceptor).incomingRequestPreHandled(eq(RestOperationTypeEnum.CREATE), detailsCapt.capture());
-		details = detailsCapt.getValue();
-		assertNull(details.getId());
-		assertEquals("Patient", details.getResourceType());
-		assertEquals(Patient.class, details.getResource().getClass());
 
 	}
 
@@ -1521,26 +1904,6 @@ public class FhirSystemDaoR4Test extends BaseJpaR4SystemTest {
 	}
 
 	@Test
-	public void testTransactionDoesNotAllowDanglingTemporaryIds() throws Exception {
-		String input = IOUtils.toString(getClass().getResourceAsStream("/cdr-bundle.json"), StandardCharsets.UTF_8);
-		Bundle bundle = myFhirCtx.newJsonParser().parseResource(Bundle.class, input);
-
-		BundleEntryComponent entry = bundle.addEntry();
-		Patient p = new Patient();
-		p.getManagingOrganization().setReference("urn:uuid:30ce60cf-f7cb-4196-961f-cadafa8b7ff5");
-		entry.setResource(p);
-		entry.getRequest().setMethod(HTTPVerb.POST);
-		entry.getRequest().setUrl("Patient");
-
-		try {
-			mySystemDao.transaction(mySrd, bundle);
-			fail();
-		} catch (InvalidRequestException e) {
-			assertEquals("Unable to satisfy placeholder ID: urn:uuid:30ce60cf-f7cb-4196-961f-cadafa8b7ff5", e.getMessage());
-		}
-	}
-
-	@Test
 	public void testTransactionDoesNotLeavePlaceholderIds() {
 		String input;
 		try {
@@ -1624,7 +1987,7 @@ public class FhirSystemDaoR4Test extends BaseJpaR4SystemTest {
 		map.add(Patient.SP_IDENTIFIER, new TokenParam("foo", "bar"));
 		search = myPatientDao.search(map);
 		assertThat(toUnqualifiedVersionlessIdValues(search), contains(createdPatientId.toUnqualifiedVersionless().getValue()));
-		pat = (Patient) search.getResources(0,1).get(0);
+		pat = (Patient) search.getResources(0, 1).get(0);
 		assertEquals("foo", pat.getIdentifierFirstRep().getSystem());
 		// Observation
 		map = new SearchParameterMap();
@@ -1632,7 +1995,7 @@ public class FhirSystemDaoR4Test extends BaseJpaR4SystemTest {
 		map.add(Observation.SP_IDENTIFIER, new TokenParam("foo", "dog"));
 		search = myObservationDao.search(map);
 		assertThat(toUnqualifiedVersionlessIdValues(search), contains(createdObservationId.toUnqualifiedVersionless().getValue()));
-		obs = (Observation) search.getResources(0,1).get(0);
+		obs = (Observation) search.getResources(0, 1).get(0);
 		assertEquals("foo", obs.getIdentifierFirstRep().getSystem());
 		assertEquals(createdPatientId.toUnqualifiedVersionless().getValue(), obs.getSubject().getReference());
 
@@ -1689,7 +2052,7 @@ public class FhirSystemDaoR4Test extends BaseJpaR4SystemTest {
 		map.add(Patient.SP_IDENTIFIER, new TokenParam("foo", "bar"));
 		search = myPatientDao.search(map);
 		assertThat(toUnqualifiedVersionlessIdValues(search), contains(createdPatientId.toUnqualifiedVersionless().getValue()));
-		pat = (Patient) search.getResources(0,1).get(0);
+		pat = (Patient) search.getResources(0, 1).get(0);
 		assertEquals("foo", pat.getIdentifierFirstRep().getSystem());
 		// Observation
 		map = new SearchParameterMap();
@@ -1697,7 +2060,7 @@ public class FhirSystemDaoR4Test extends BaseJpaR4SystemTest {
 		map.add(Observation.SP_IDENTIFIER, new TokenParam("foo", "dog"));
 		search = myObservationDao.search(map);
 		assertThat(toUnqualifiedVersionlessIdValues(search), contains(createdObservationId.toUnqualifiedVersionless().getValue()));
-		obs = (Observation) search.getResources(0,1).get(0);
+		obs = (Observation) search.getResources(0, 1).get(0);
 		assertEquals("foo", obs.getIdentifierFirstRep().getSystem());
 		assertEquals(createdPatientId.toUnqualifiedVersionless().getValue(), obs.getSubject().getReference());
 
@@ -1755,7 +2118,7 @@ public class FhirSystemDaoR4Test extends BaseJpaR4SystemTest {
 		map.add(Patient.SP_IDENTIFIER, new TokenParam("foo", "bar"));
 		search = myPatientDao.search(map);
 		assertThat(toUnqualifiedVersionlessIdValues(search), contains(createdPatientId.toUnqualifiedVersionless().getValue()));
-		pat = (Patient) search.getResources(0,1).get(0);
+		pat = (Patient) search.getResources(0, 1).get(0);
 		assertEquals("foo", pat.getIdentifierFirstRep().getSystem());
 		// Observation
 		map = new SearchParameterMap();
@@ -1763,7 +2126,7 @@ public class FhirSystemDaoR4Test extends BaseJpaR4SystemTest {
 		map.add(Observation.SP_IDENTIFIER, new TokenParam("foo", "dog"));
 		search = myObservationDao.search(map);
 		assertThat(toUnqualifiedVersionlessIdValues(search), contains(createdObservationId.toUnqualifiedVersionless().getValue()));
-		obs = (Observation) search.getResources(0,1).get(0);
+		obs = (Observation) search.getResources(0, 1).get(0);
 		assertEquals("foo", obs.getIdentifierFirstRep().getSystem());
 		assertEquals(createdPatientId.toUnqualifiedVersionless().getValue(), obs.getSubject().getReference());
 		assertEquals(ObservationStatus.FINAL, obs.getStatus());
@@ -2058,33 +2421,6 @@ public class FhirSystemDaoR4Test extends BaseJpaR4SystemTest {
 		Bundle respBundle = (Bundle) nextEntry.getResource();
 		assertEquals(1, respBundle.getTotal());
 
-		/*
-		 * Interceptor should have been called once for the transaction, and once for the embedded operation
-		 */
-		ArgumentCaptor<ActionRequestDetails> detailsCapt = ArgumentCaptor.forClass(ActionRequestDetails.class);
-		verify(myInterceptor, times(1)).incomingRequestPreHandled(eq(RestOperationTypeEnum.TRANSACTION), detailsCapt.capture());
-		ActionRequestDetails details = detailsCapt.getValue();
-		assertEquals("Bundle", details.getResourceType());
-		assertEquals(Bundle.class, details.getResource().getClass());
-
-		detailsCapt = ArgumentCaptor.forClass(ActionRequestDetails.class);
-		verify(myInterceptor, times(1)).incomingRequestPreHandled(eq(RestOperationTypeEnum.READ), detailsCapt.capture());
-		details = detailsCapt.getValue();
-		assertEquals(idv1.toUnqualifiedVersionless().getValue(), details.getId().getValue());
-		assertEquals("Patient", details.getResourceType());
-
-		detailsCapt = ArgumentCaptor.forClass(ActionRequestDetails.class);
-		verify(myInterceptor, times(1)).incomingRequestPreHandled(eq(RestOperationTypeEnum.VREAD), detailsCapt.capture());
-		details = detailsCapt.getValue();
-		assertEquals(idv1.toUnqualified().getValue(), details.getId().getValue());
-		assertEquals("Patient", details.getResourceType());
-
-		detailsCapt = ArgumentCaptor.forClass(ActionRequestDetails.class);
-		verify(myInterceptor, times(1)).incomingRequestPreHandled(eq(RestOperationTypeEnum.SEARCH_TYPE), detailsCapt.capture());
-		details = detailsCapt.getValue();
-		assertEquals("Patient", details.getResourceType());
-
-
 	}
 
 	@Test
@@ -2130,6 +2466,145 @@ public class FhirSystemDaoR4Test extends BaseJpaR4SystemTest {
 		nextEntry = resp.getEntry().get(2);
 		assertEquals("304 Not Modified", nextEntry.getResponse().getStatus());
 		assertNull(nextEntry.getResource());
+	}
+
+	@Test
+	public void testTransactionWithRefsToConditionalCreate() {
+
+		Bundle b = createTransactionBundleForTestTransactionWithRefsToConditionalCreate();
+		mySystemDao.transaction(mySrd, b);
+
+		IBundleProvider history = myObservationDao.search(new SearchParameterMap().setLoadSynchronous(true));
+		Bundle list = toBundleR4(history);
+		assertEquals(1, list.getEntry().size());
+		Observation o = find(list, Observation.class, 0);
+		assertThat(o.getSubject().getReference(), matchesPattern("Patient/[0-9]+"));
+
+		b = createTransactionBundleForTestTransactionWithRefsToConditionalCreate();
+		mySystemDao.transaction(mySrd, b);
+
+		history = myObservationDao.search(new SearchParameterMap().setLoadSynchronous(true));
+		list = toBundleR4(history);
+		assertEquals(1, list.getEntry().size());
+		o = find(list, Observation.class, 0);
+		assertThat(o.getSubject().getReference(), matchesPattern("Patient/[0-9]+"));
+
+	}
+
+
+	@Test
+	public void testDeleteInTransactionShouldFailWhenReferencesExist() {
+		final Observation obs1 = new Observation();
+		obs1.setStatus(ObservationStatus.FINAL);
+		IIdType obs1id = myObservationDao.create(obs1).getId().toUnqualifiedVersionless();
+
+		final Observation obs2 = new Observation();
+		obs2.setStatus(ObservationStatus.FINAL);
+		IIdType obs2id = myObservationDao.create(obs2).getId().toUnqualifiedVersionless();
+
+		final DiagnosticReport rpt = new DiagnosticReport();
+		rpt.addResult(new Reference(obs2id));
+		IIdType rptId = myDiagnosticReportDao.create(rpt).getId().toUnqualifiedVersionless();
+
+		myObservationDao.read(obs1id);
+		myObservationDao.read(obs2id);
+		myDiagnosticReportDao.read(rptId);
+
+		Bundle b = new Bundle();
+		b.addEntry().getRequest().setMethod(HTTPVerb.DELETE).setUrl(obs2id.getValue());
+
+		try {
+			mySystemDao.transaction(mySrd, b);
+			fail();
+		} catch (ResourceVersionConflictException e) {
+			// good, transaction should not succeed because DiagnosticReport has a reference to the obs2
+		}
+	}
+
+	@Test
+	public void testDeleteInTransactionShouldSucceedWhenReferencesAreAlsoRemoved() {
+		final Observation obs1 = new Observation();
+		obs1.setStatus(ObservationStatus.FINAL);
+		IIdType obs1id = myObservationDao.create(obs1).getId().toUnqualifiedVersionless();
+
+		final Observation obs2 = new Observation();
+		obs2.setStatus(ObservationStatus.FINAL);
+		IIdType obs2id = myObservationDao.create(obs2).getId().toUnqualifiedVersionless();
+
+		final DiagnosticReport rpt = new DiagnosticReport();
+		rpt.addResult(new Reference(obs2id));
+		IIdType rptId = myDiagnosticReportDao.create(rpt).getId().toUnqualifiedVersionless();
+
+		myObservationDao.read(obs1id);
+		myObservationDao.read(obs2id);
+		myDiagnosticReportDao.read(rptId);
+
+		Bundle b = new Bundle();
+		b.addEntry().getRequest().setMethod(HTTPVerb.DELETE).setUrl(obs2id.getValue());
+		b.addEntry().getRequest().setMethod(HTTPVerb.DELETE).setUrl(rptId.getValue());
+
+		try {
+			// transaction should succeed because the DiagnosticReport which references obs2 is also deleted
+			mySystemDao.transaction(mySrd, b);
+		} catch (ResourceVersionConflictException e) {
+			fail();
+		}
+	}
+
+	private Bundle createTransactionBundleForTestTransactionWithRefsToConditionalCreate() {
+		Bundle b = new Bundle();
+		b.setType(BundleType.TRANSACTION);
+
+		Patient p = new Patient();
+		p.setId(IdType.newRandomUuid());
+		p.addIdentifier().setSystem("foo").setValue("bar");
+		b.addEntry()
+			.setFullUrl(p.getId())
+			.setResource(p)
+			.getRequest()
+			.setMethod(HTTPVerb.POST)
+			.setUrl("Patient")
+			.setIfNoneExist("Patient?identifier=foo|bar");
+
+		b.addEntry()
+			.getRequest()
+			.setMethod(HTTPVerb.DELETE)
+			.setUrl("Observation?status=final");
+
+		Observation o = new Observation();
+		o.setId(IdType.newRandomUuid());
+		o.setStatus(ObservationStatus.FINAL);
+		o.getSubject().setResource(p);
+		b.addEntry()
+			.setFullUrl(o.getId())
+			.setResource(o)
+			.getRequest()
+			.setMethod(HTTPVerb.POST)
+			.setUrl("Observation");
+		return b;
+	}
+
+	@Test
+	public void testTransactionWithUnknownTemnporaryIdReference() {
+		String methodName = "testTransactionWithUnknownTemnporaryIdReference";
+
+		Bundle request = new Bundle();
+
+		Patient p = new Patient();
+		p.addIdentifier().setSystem("urn:system").setValue(methodName);
+		request.addEntry().setResource(p).getRequest().setMethod(HTTPVerb.POST).setUrl("Patient");
+
+		p = new Patient();
+		p.addIdentifier().setSystem("urn:system").setValue(methodName);
+		p.getManagingOrganization().setReference(IdType.newRandomUuid().getValue());
+		request.addEntry().setResource(p).getRequest().setMethod(HTTPVerb.POST).setUrl("Patient");
+
+		try {
+			mySystemDao.transaction(mySrd, request);
+			fail();
+		} catch (InvalidRequestException e) {
+			assertThat(e.getMessage(), Matchers.matchesPattern("Unable to satisfy placeholder ID urn:uuid:[0-9a-z-]+ found in element named 'managingOrganization' within resource of type: Patient"));
+		}
 	}
 
 	@Test
@@ -2338,8 +2813,8 @@ public class FhirSystemDaoR4Test extends BaseJpaR4SystemTest {
 
 		assertThat(nextEntry.getResponse().getLocation(), (containsString("test")));
 		assertEquals(id.toVersionless(), new IdType(nextEntry.getResponse().getLocation()).toVersionless());
-		assertNotEquals(id, new IdType(nextEntry.getResponse().getLocation()));
 		assertThat(nextEntry.getResponse().getLocation(), endsWith("/_history/2"));
+		assertNotEquals(id, new IdType(nextEntry.getResponse().getLocation()));
 
 		nextEntry = resp.getEntry().get(1);
 		assertEquals(Constants.STATUS_HTTP_201_CREATED + " Created", nextEntry.getResponse().getStatus());
@@ -2458,7 +2933,7 @@ public class FhirSystemDaoR4Test extends BaseJpaR4SystemTest {
 		cond.setId(IdType.newRandomUuid());
 
 		enc.addDiagnosis().getCondition().setReference(cond.getId());
-		cond.getContext().setReference(enc.getId());
+		cond.getEncounter().setReference(enc.getId());
 
 		request
 			.addEntry()
@@ -2503,7 +2978,7 @@ public class FhirSystemDaoR4Test extends BaseJpaR4SystemTest {
 
 	@Test
 	public void testTransactionWithCircularReferences3() throws IOException {
-		Bundle request = loadResourceFromClasspath(Bundle.class, "/dstu3_transaction2.xml");
+		Bundle request = loadResourceFromClasspath(Bundle.class, "/r4/r4_transaction2.xml");
 
 		Bundle resp = mySystemDao.transaction(mySrd, request);
 		assertEquals(3, resp.getEntry().size());
@@ -3230,7 +3705,7 @@ public class FhirSystemDaoR4Test extends BaseJpaR4SystemTest {
 
 	@Test
 	public void testTransactionWithReplacement() {
-		byte[] bytes = new byte[] {0, 1, 2, 3, 4};
+		byte[] bytes = new byte[]{0, 1, 2, 3, 4};
 
 		Binary binary = new Binary();
 		binary.setId(IdType.newRandomUuid());
@@ -3366,7 +3841,7 @@ public class FhirSystemDaoR4Test extends BaseJpaR4SystemTest {
 	public void testUpdatePreviouslyDeletedResourceInBatch() {
 		AllergyIntolerance ai = new AllergyIntolerance();
 		ai.setId("AIA1914009");
-		ai.setClinicalStatus(AllergyIntolerance.AllergyIntoleranceClinicalStatus.ACTIVE);
+		ai.addNote().setText("Hello");
 		IIdType id = myAllergyIntoleranceDao.update(ai).getId();
 		assertEquals("1", id.getVersionIdPart());
 
@@ -3384,7 +3859,7 @@ public class FhirSystemDaoR4Test extends BaseJpaR4SystemTest {
 		batch.setType(BundleType.BATCH);
 		ai = new AllergyIntolerance();
 		ai.setId("AIA1914009");
-		ai.setClinicalStatus(AllergyIntolerance.AllergyIntoleranceClinicalStatus.ACTIVE);
+		ai.addNote().setText("Hello");
 		batch
 			.addEntry()
 			.setFullUrl("AllergyIntolerance/AIA1914009")

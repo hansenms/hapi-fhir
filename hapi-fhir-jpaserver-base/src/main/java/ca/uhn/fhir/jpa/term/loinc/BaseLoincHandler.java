@@ -4,14 +4,14 @@ package ca.uhn.fhir.jpa.term.loinc;
  * #%L
  * HAPI FHIR JPA Server
  * %%
- * Copyright (C) 2014 - 2018 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -26,17 +26,21 @@ import org.hl7.fhir.r4.model.ConceptMap;
 import org.hl7.fhir.r4.model.ContactPoint;
 import org.hl7.fhir.r4.model.Enumerations;
 import org.hl7.fhir.r4.model.ValueSet;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 
+import static ca.uhn.fhir.jpa.term.loinc.LoincUploadPropertiesEnum.*;
 import static org.apache.commons.lang3.StringUtils.*;
 
 public abstract class BaseLoincHandler implements IRecordHandler {
-
+	private static final Logger ourLog = LoggerFactory.getLogger(BaseLoincHandler.class);
 	public static final String LOINC_COPYRIGHT_STATEMENT = "This content from LOINC® is copyright © 1995 Regenstrief Institute, Inc. and the LOINC Committee, and available at no cost under the license at https://loinc.org/license/";
+
 	/**
 	 * This is <b>NOT</b> the LOINC CodeSystem URI! It is just
 	 * the website URL to LOINC.
@@ -52,8 +56,10 @@ public abstract class BaseLoincHandler implements IRecordHandler {
 
 	BaseLoincHandler(Map<String, TermConcept> theCode2Concept, List<ValueSet> theValueSets, List<ConceptMap> theConceptMaps, Properties theUploadProperties) {
 		myValueSets = theValueSets;
+		myValueSets.forEach(t -> myIdToValueSet.put(t.getId(), t));
 		myCode2Concept = theCode2Concept;
 		myConceptMaps = theConceptMaps;
+		myConceptMaps.forEach(t -> myIdToConceptMaps.put(t.getId(), t));
 		myUploadProperties = theUploadProperties;
 	}
 
@@ -80,10 +86,9 @@ public abstract class BaseLoincHandler implements IRecordHandler {
 
 			String displayName = theDisplayName;
 			if (isBlank(displayName)) {
-				for (TermConcept next : myCode2Concept.values()) {
-					if (next.getCode().equals(theCode)) {
-						displayName = next.getDisplay();
-					}
+				TermConcept concept = myCode2Concept.get(theCode);
+				if (concept != null) {
+					displayName = concept.getDisplay();
 				}
 			}
 
@@ -110,7 +115,7 @@ public abstract class BaseLoincHandler implements IRecordHandler {
 			conceptMap.setId(theMapping.getConceptMapId());
 			conceptMap.setUrl(theMapping.getConceptMapUri());
 			conceptMap.setName(theMapping.getConceptMapName());
-			conceptMap.setVersion(myUploadProperties.getProperty("conceptmap.version"));
+			conceptMap.setVersion(myUploadProperties.getProperty(LOINC_CONCEPTMAP_VERSION.getCode()));
 			conceptMap.setPublisher(REGENSTRIEF_INSTITUTE_INC);
 			conceptMap.addContact()
 				.setName(REGENSTRIEF_INSTITUTE_INC)
@@ -176,6 +181,8 @@ public abstract class BaseLoincHandler implements IRecordHandler {
 				.setCode(theMapping.getTargetCode())
 				.setDisplay(theMapping.getTargetDisplay())
 				.setEquivalence(theMapping.getEquivalence());
+		} else {
+			ourLog.info("Not going to add a mapping from [{}/{}] to [{}/{}] because one already exists", theMapping.getSourceCodeSystem(), theMapping.getSourceCode(), theMapping.getTargetCodeSystem(), theMapping.getTargetCode());
 		}
 	}
 
@@ -192,7 +199,6 @@ public abstract class BaseLoincHandler implements IRecordHandler {
 			vs.setUrl(theValueSetUri);
 			vs.setId(theValueSetId);
 			vs.setVersion(version);
-			vs.setName(theValueSetName);
 			vs.setStatus(Enumerations.PublicationStatus.ACTIVE);
 			vs.setPublisher(REGENSTRIEF_INSTITUTE_INC);
 			vs.addContact()
@@ -206,6 +212,11 @@ public abstract class BaseLoincHandler implements IRecordHandler {
 		} else {
 			vs = myIdToValueSet.get(theValueSetId);
 		}
+
+		if (isBlank(vs.getName()) && isNotBlank(theValueSetName)) {
+			vs.setName(theValueSetName);
+		}
+
 		return vs;
 	}
 

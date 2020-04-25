@@ -4,14 +4,14 @@ package ca.uhn.fhir.rest.server.interceptor.auth;
  * #%L
  * HAPI FHIR - Server Framework
  * %%
- * Copyright (C) 2014 - 2018 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -20,21 +20,27 @@ package ca.uhn.fhir.rest.server.interceptor.auth;
  * #L%
  */
 
+import ca.uhn.fhir.model.api.annotation.ResourceDef;
 import ca.uhn.fhir.model.primitive.IdDt;
 import ca.uhn.fhir.rest.api.RestOperationTypeEnum;
 import ca.uhn.fhir.rest.api.server.RequestDetails;
+import com.google.common.collect.Lists;
 import org.apache.commons.lang3.Validate;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.instance.model.api.IIdType;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static org.apache.commons.lang3.ObjectUtils.defaultIfNull;
 
 public class RuleBuilder implements IAuthRuleBuilder {
 
-	public static final String[] EMPTY_STRING_ARRAY = new String[0];
+	private static final String[] EMPTY_STRING_ARRAY = new String[0];
+	private static final ConcurrentHashMap<Class<? extends IBaseResource>, String> ourTypeToName = new ConcurrentHashMap<>();
 	private ArrayList<IAuthRule> myRules;
+	private IAuthRuleBuilderRule myAllow;
+	private IAuthRuleBuilderRule myDeny;
 
 	public RuleBuilder() {
 		myRules = new ArrayList<>();
@@ -42,7 +48,10 @@ public class RuleBuilder implements IAuthRuleBuilder {
 
 	@Override
 	public IAuthRuleBuilderRule allow() {
-		return allow(null);
+		if (myAllow == null) {
+			myAllow = allow(null);
+		}
+		return myAllow;
 	}
 
 	@Override
@@ -69,7 +78,10 @@ public class RuleBuilder implements IAuthRuleBuilder {
 
 	@Override
 	public IAuthRuleBuilderRule deny() {
-		return deny(null);
+		if (myDeny == null) {
+			myDeny = deny(null);
+		}
+		return myDeny;
 	}
 
 	@Override
@@ -95,19 +107,13 @@ public class RuleBuilder implements IAuthRuleBuilder {
 
 	private class RuleBuilderFinished implements IAuthRuleFinished, IAuthRuleBuilderRuleOpClassifierFinished, IAuthRuleBuilderRuleOpClassifierFinishedWithTenantId {
 
-		private final RuleImplOp myOpRule;
-		private final OperationRule myOperationRule;
-		protected ITenantApplicabilityChecker myTenantApplicabilityChecker;
+		protected final BaseRule myOpRule;
+		ITenantApplicabilityChecker myTenantApplicabilityChecker;
 		private List<IAuthRuleTester> myTesters;
 
-		RuleBuilderFinished(RuleImplOp theRule) {
+		RuleBuilderFinished(BaseRule theRule) {
+			assert theRule != null;
 			myOpRule = theRule;
-			myOperationRule = null;
-		}
-
-		public RuleBuilderFinished(OperationRule theRule) {
-			myOpRule = null;
-			myOperationRule = theRule;
 		}
 
 		@Override
@@ -136,16 +142,11 @@ public class RuleBuilder implements IAuthRuleBuilder {
 
 		@Override
 		public IAuthRuleBuilderRuleOpClassifierFinishedWithTenantId forTenantIds(final Collection<String> theTenantIds) {
-			setTenantApplicabilityChecker(new ITenantApplicabilityChecker() {
-				@Override
-				public boolean applies(RequestDetails theRequest) {
-					return theTenantIds.contains(theRequest.getTenantId());
-				}
-			});
+			setTenantApplicabilityChecker(theRequest -> theTenantIds.contains(theRequest.getTenantId()));
 			return this;
 		}
 
-		public List<IAuthRuleTester> getTesters() {
+		List<IAuthRuleTester> getTesters() {
 			if (myTesters == null) {
 				return Collections.emptyList();
 			}
@@ -159,23 +160,13 @@ public class RuleBuilder implements IAuthRuleBuilder {
 
 		@Override
 		public IAuthRuleBuilderRuleOpClassifierFinishedWithTenantId notForTenantIds(final Collection<String> theTenantIds) {
-			setTenantApplicabilityChecker(new ITenantApplicabilityChecker() {
-				@Override
-				public boolean applies(RequestDetails theRequest) {
-					return !theTenantIds.contains(theRequest.getTenantId());
-				}
-			});
+			setTenantApplicabilityChecker(theRequest -> !theTenantIds.contains(theRequest.getTenantId()));
 			return this;
 		}
 
 		private void setTenantApplicabilityChecker(ITenantApplicabilityChecker theTenantApplicabilityChecker) {
 			myTenantApplicabilityChecker = theTenantApplicabilityChecker;
-			if (myOpRule != null) {
-				myOpRule.setTenantApplicabilityChecker(myTenantApplicabilityChecker);
-			}
-			if (myOperationRule != null) {
-				myOperationRule.setTenentApplicabilityChecker(myTenantApplicabilityChecker);
-			}
+			myOpRule.setTenantApplicabilityChecker(myTenantApplicabilityChecker);
 		}
 
 		@Override
@@ -184,12 +175,7 @@ public class RuleBuilder implements IAuthRuleBuilder {
 				myTesters = new ArrayList<>();
 			}
 			myTesters.add(theTester);
-			if (myOperationRule != null) {
-				myOperationRule.addTester(theTester);
-			}
-			if (myOpRule != null) {
-				myOpRule.addTester(theTester);
-			}
+			myOpRule.addTester(theTester);
 
 			return this;
 		}
@@ -199,7 +185,8 @@ public class RuleBuilder implements IAuthRuleBuilder {
 
 		private PolicyEnum myRuleMode;
 		private String myRuleName;
-		private RuleOpEnum myRuleOp;
+		private RuleBuilderRuleOp myReadRuleBuilder;
+		private RuleBuilderRuleOp myWriteRuleBuilder;
 
 		RuleBuilderRule(PolicyEnum theRuleMode, String theRuleName) {
 			myRuleMode = theRuleMode;
@@ -212,9 +199,8 @@ public class RuleBuilder implements IAuthRuleBuilder {
 		}
 
 		@Override
-		public IAuthRuleBuilderRuleOp delete() {
-			myRuleOp = RuleOpEnum.DELETE;
-			return new RuleBuilderRuleOp();
+		public IAuthRuleBuilderRuleOpDelete delete() {
+			return new RuleBuilderRuleOp(RuleOpEnum.DELETE);
 		}
 
 		@Override
@@ -237,14 +223,20 @@ public class RuleBuilder implements IAuthRuleBuilder {
 		}
 
 		@Override
+		public IAuthRuleBuilderPatch patch() {
+			return new PatchBuilder();
+		}
+
+		@Override
 		public IAuthRuleBuilderRuleOp read() {
-			myRuleOp = RuleOpEnum.READ;
-			return new RuleBuilderRuleOp();
+			if (myReadRuleBuilder == null) {
+				myReadRuleBuilder = new RuleBuilderRuleOp(RuleOpEnum.READ);
+			}
+			return myReadRuleBuilder;
 		}
 
 		@Override
 		public IAuthRuleBuilderRuleTransaction transaction() {
-			myRuleOp = RuleOpEnum.TRANSACTION;
 			return new RuleBuilderRuleTransaction();
 		}
 
@@ -255,15 +247,29 @@ public class RuleBuilder implements IAuthRuleBuilder {
 
 		@Override
 		public IAuthRuleBuilderRuleOp write() {
-			myRuleOp = RuleOpEnum.WRITE;
-			return new RuleBuilderRuleOp();
+			if (myWriteRuleBuilder == null) {
+				myWriteRuleBuilder = new RuleBuilderRuleOp(RuleOpEnum.WRITE);
+			}
+			return myWriteRuleBuilder;
+		}
+
+		@Override
+		public IAuthRuleBuilderRuleOp create() {
+			if (myWriteRuleBuilder == null) {
+				myWriteRuleBuilder = new RuleBuilderRuleOp(RuleOpEnum.CREATE);
+			}
+			return myWriteRuleBuilder;
+		}
+
+		@Override
+		public IAuthRuleBuilderGraphQL graphQL() {
+			return new RuleBuilderGraphQL();
 		}
 
 		private class RuleBuilderRuleConditional implements IAuthRuleBuilderRuleConditional {
 
 			private AppliesTypeEnum myAppliesTo;
-
-			private Set<?> myAppliesToTypes;
+			private Set<String> myAppliesToTypes;
 			private RestOperationTypeEnum myOperationType;
 
 			RuleBuilderRuleConditional(RestOperationTypeEnum theOperationType) {
@@ -279,6 +285,13 @@ public class RuleBuilder implements IAuthRuleBuilder {
 			@Override
 			public IAuthRuleBuilderRuleConditionalClassifier resourcesOfType(Class<? extends IBaseResource> theType) {
 				Validate.notNull(theType, "theType must not be null");
+
+				String typeName = toTypeName(theType);
+				return resourcesOfType(typeName);
+			}
+
+			@Override
+			public IAuthRuleBuilderRuleConditionalClassifier resourcesOfType(String theType) {
 				myAppliesTo = AppliesTypeEnum.TYPES;
 				myAppliesToTypes = Collections.singleton(theType);
 				return new RuleBuilderRuleConditionalClassifier();
@@ -286,13 +299,13 @@ public class RuleBuilder implements IAuthRuleBuilder {
 
 			public class RuleBuilderRuleConditionalClassifier extends RuleBuilderFinished implements IAuthRuleBuilderRuleConditionalClassifier {
 
-				public RuleBuilderRuleConditionalClassifier() {
-					super((RuleImplOp) null);
+				RuleBuilderRuleConditionalClassifier() {
+					super(new RuleImplConditional(myRuleName));
 				}
 
 				@Override
 				protected void doBuildRule() {
-					RuleImplConditional rule = new RuleImplConditional(myRuleName);
+					RuleImplConditional rule = (RuleImplConditional) myOpRule;
 					rule.setMode(myRuleMode);
 					rule.setOperationType(myOperationType);
 					rule.setAppliesTo(myAppliesTo);
@@ -306,15 +319,19 @@ public class RuleBuilder implements IAuthRuleBuilder {
 
 		}
 
-		private class RuleBuilderRuleOp implements IAuthRuleBuilderRuleOp {
+		private class RuleBuilderRuleOp implements IAuthRuleBuilderRuleOp, IAuthRuleBuilderRuleOpDelete {
 
-			private AppliesTypeEnum myAppliesTo;
-			private Set<?> myAppliesToTypes;
+			private final RuleOpEnum myRuleOp;
+			private RuleBuilderRuleOpClassifier myInstancesBuilder;
+			private boolean myOnCascade;
+
+			RuleBuilderRuleOp(RuleOpEnum theRuleOp) {
+				myRuleOp = theRuleOp;
+			}
 
 			@Override
 			public IAuthRuleBuilderRuleOpClassifier allResources() {
-				myAppliesTo = AppliesTypeEnum.ALL_RESOURCES;
-				return new RuleBuilderRuleOpClassifier();
+				return new RuleBuilderRuleOpClassifier(AppliesTypeEnum.ALL_RESOURCES, null);
 			}
 
 			@Override
@@ -329,53 +346,87 @@ public class RuleBuilder implements IAuthRuleBuilder {
 				Validate.notBlank(theId.getValue(), "theId.getValue() must not be null or empty");
 				Validate.notBlank(theId.getIdPart(), "theId must contain an ID part");
 
-				return new RuleBuilderRuleOpClassifier(Arrays.asList(theId)).finished();
+				List<IIdType> instances = Lists.newArrayList(theId);
+				return instances(instances);
 			}
+
+			@Override
+			public RuleBuilderFinished instances(Collection<IIdType> theInstances) {
+				Validate.notNull(theInstances, "theInstances must not be null");
+				Validate.notEmpty(theInstances, "theInstances must not be empty");
+
+				if (myInstancesBuilder == null) {
+					RuleBuilderRuleOpClassifier instancesBuilder = new RuleBuilderRuleOpClassifier(theInstances);
+					myInstancesBuilder = instancesBuilder;
+					return instancesBuilder.finished();
+				} else {
+					return myInstancesBuilder.addInstances(theInstances);
+				}
+			}
+
 
 			@Override
 			public IAuthRuleBuilderRuleOpClassifier resourcesOfType(Class<? extends IBaseResource> theType) {
 				Validate.notNull(theType, "theType must not be null");
-				myAppliesTo = AppliesTypeEnum.TYPES;
-				myAppliesToTypes = Collections.singleton(theType);
-				return new RuleBuilderRuleOpClassifier();
+				String resourceName = toTypeName(theType);
+				return resourcesOfType(resourceName);
+			}
+
+			@Override
+			public IAuthRuleBuilderRuleOpClassifier resourcesOfType(String theType) {
+				Validate.notNull(theType, "theType must not be null");
+				return new RuleBuilderRuleOpClassifier(AppliesTypeEnum.TYPES, Collections.singleton(theType));
+			}
+
+			@Override
+			public IAuthRuleBuilderRuleOp onCascade() {
+				myOnCascade = true;
+				return this;
 			}
 
 			private class RuleBuilderRuleOpClassifier implements IAuthRuleBuilderRuleOpClassifier {
 
+				private final AppliesTypeEnum myAppliesTo;
+				private final Set<String> myAppliesToTypes;
 				private ClassifierTypeEnum myClassifierType;
 				private String myInCompartmentName;
 				private Collection<? extends IIdType> myInCompartmentOwners;
-				private List<IIdType> myAppliesToInstances;
+				private Collection<IIdType> myAppliesToInstances;
+				private RuleImplOp myRule;
 
 				/**
 				 * Constructor
 				 */
-				RuleBuilderRuleOpClassifier() {
+				RuleBuilderRuleOpClassifier(AppliesTypeEnum theAppliesTo, Set<String> theAppliesToTypes) {
 					super();
+					myAppliesTo = theAppliesTo;
+					myAppliesToTypes = theAppliesToTypes;
 				}
 
 				/**
 				 * Constructor
 				 */
-				RuleBuilderRuleOpClassifier(List<IIdType> theAppliesToInstances) {
+				RuleBuilderRuleOpClassifier(Collection<IIdType> theAppliesToInstances) {
 					myAppliesToInstances = theAppliesToInstances;
 					myAppliesTo = AppliesTypeEnum.INSTANCES;
+					myAppliesToTypes = null;
 				}
 
-				private IAuthRuleBuilderRuleOpClassifierFinished finished() {
+				private RuleBuilderFinished finished() {
+					Validate.isTrue(myRule == null, "Can not call finished() twice");
+					myRule = new RuleImplOp(myRuleName);
+					myRule.setMode(myRuleMode);
+					myRule.setOp(myRuleOp);
+					myRule.setAppliesTo(myAppliesTo);
+					myRule.setAppliesToTypes(myAppliesToTypes);
+					myRule.setAppliesToInstances(myAppliesToInstances);
+					myRule.setClassifierType(myClassifierType);
+					myRule.setClassifierCompartmentName(myInCompartmentName);
+					myRule.setClassifierCompartmentOwners(myInCompartmentOwners);
+					myRule.setAppliesToDeleteCascade(myOnCascade);
+					myRules.add(myRule);
 
-					RuleImplOp rule = new RuleImplOp(myRuleName);
-					rule.setMode(myRuleMode);
-					rule.setOp(myRuleOp);
-					rule.setAppliesTo(myAppliesTo);
-					rule.setAppliesToTypes(myAppliesToTypes);
-					rule.setAppliesToInstances(myAppliesToInstances);
-					rule.setClassifierType(myClassifierType);
-					rule.setClassifierCompartmentName(myInCompartmentName);
-					rule.setClassifierCompartmentOwners(myInCompartmentOwners);
-					myRules.add(rule);
-
-					return new RuleBuilderFinished(rule);
+					return new RuleBuilderFinished(myRule);
 				}
 
 				@Override
@@ -414,6 +465,10 @@ public class RuleBuilder implements IAuthRuleBuilder {
 					return finished();
 				}
 
+				RuleBuilderFinished addInstances(Collection<IIdType> theInstances) {
+					myAppliesToInstances.addAll(theInstances);
+					return new RuleBuilderFinished(myRule);
+				}
 			}
 
 		}
@@ -435,7 +490,7 @@ public class RuleBuilder implements IAuthRuleBuilder {
 
 				private String myOperationName;
 
-				public RuleBuilderRuleOperationNamed(String theOperationName) {
+				RuleBuilderRuleOperationNamed(String theOperationName) {
 					if (theOperationName != null && !theOperationName.startsWith("$")) {
 						myOperationName = '$' + theOperationName;
 					} else {
@@ -451,31 +506,28 @@ public class RuleBuilder implements IAuthRuleBuilder {
 				}
 
 				@Override
-				public IAuthRuleBuilderRuleOpClassifierFinished onAnyInstance() {
+				public IAuthRuleBuilderOperationNamedAndScoped onAnyInstance() {
 					OperationRule rule = createRule();
 					rule.appliesToAnyInstance();
-					myRules.add(rule);
-					return new RuleBuilderFinished(rule);
+					return new RuleBuilderOperationNamedAndScoped(rule);
 				}
 
 				@Override
-				public IAuthRuleBuilderRuleOpClassifierFinished atAnyLevel() {
+				public IAuthRuleBuilderOperationNamedAndScoped atAnyLevel() {
 					OperationRule rule = createRule();
 					rule.appliesAtAnyLevel(true);
-					myRules.add(rule);
-					return new RuleBuilderFinished(rule);
+					return new RuleBuilderOperationNamedAndScoped(rule);
 				}
 
 				@Override
-				public IAuthRuleBuilderRuleOpClassifierFinished onAnyType() {
+				public IAuthRuleBuilderOperationNamedAndScoped onAnyType() {
 					OperationRule rule = createRule();
 					rule.appliesToAnyType();
-					myRules.add(rule);
-					return new RuleBuilderFinished(rule);
+					return new RuleBuilderOperationNamedAndScoped(rule);
 				}
 
 				@Override
-				public IAuthRuleBuilderRuleOpClassifierFinished onInstance(IIdType theInstanceId) {
+				public IAuthRuleBuilderOperationNamedAndScoped onInstance(IIdType theInstanceId) {
 					Validate.notNull(theInstanceId, "theInstanceId must not be null");
 					Validate.notBlank(theInstanceId.getResourceType(), "theInstanceId does not have a resource type");
 					Validate.notBlank(theInstanceId.getIdPart(), "theInstanceId does not have an ID part");
@@ -484,36 +536,32 @@ public class RuleBuilder implements IAuthRuleBuilder {
 					ArrayList<IIdType> ids = new ArrayList<>();
 					ids.add(theInstanceId);
 					rule.appliesToInstances(ids);
-					myRules.add(rule);
-					return new RuleBuilderFinished(rule);
+					return new RuleBuilderOperationNamedAndScoped(rule);
 				}
 
 				@Override
-				public IAuthRuleBuilderRuleOpClassifierFinished onInstancesOfType(Class<? extends IBaseResource> theType) {
+				public IAuthRuleBuilderOperationNamedAndScoped onInstancesOfType(Class<? extends IBaseResource> theType) {
 					validateType(theType);
 
 					OperationRule rule = createRule();
 					rule.appliesToInstancesOfType(toTypeSet(theType));
-					myRules.add(rule);
-					return new RuleBuilderFinished(rule);
+					return new RuleBuilderOperationNamedAndScoped(rule);
 				}
 
 				@Override
-				public IAuthRuleBuilderRuleOpClassifierFinished onServer() {
+				public IAuthRuleBuilderOperationNamedAndScoped onServer() {
 					OperationRule rule = createRule();
 					rule.appliesToServer();
-					myRules.add(rule);
-					return new RuleBuilderFinished(rule);
+					return new RuleBuilderOperationNamedAndScoped(rule);
 				}
 
 				@Override
-				public IAuthRuleBuilderRuleOpClassifierFinished onType(Class<? extends IBaseResource> theType) {
+				public IAuthRuleBuilderOperationNamedAndScoped onType(Class<? extends IBaseResource> theType) {
 					validateType(theType);
 
 					OperationRule rule = createRule();
 					rule.appliesToTypes(toTypeSet(theType));
-					myRules.add(rule);
-					return new RuleBuilderFinished(rule);
+					return new RuleBuilderOperationNamedAndScoped(rule);
 				}
 
 				private HashSet<Class<? extends IBaseResource>> toTypeSet(Class<? extends IBaseResource> theType) {
@@ -524,6 +572,28 @@ public class RuleBuilder implements IAuthRuleBuilder {
 
 				private void validateType(Class<? extends IBaseResource> theType) {
 					Validate.notNull(theType, "theType must not be null");
+				}
+
+				private class RuleBuilderOperationNamedAndScoped implements IAuthRuleBuilderOperationNamedAndScoped {
+
+					private final OperationRule myRule;
+
+					RuleBuilderOperationNamedAndScoped(OperationRule theRule) {
+						myRule = theRule;
+					}
+
+					@Override
+					public IAuthRuleBuilderRuleOpClassifierFinished andAllowAllResponses() {
+						myRule.allowAllResponses();
+						myRules.add(myRule);
+						return new RuleBuilderFinished(myRule);
+					}
+
+					@Override
+					public IAuthRuleBuilderRuleOpClassifierFinished andRequireExplicitResponseAuthorization() {
+						myRules.add(myRule);
+						return new RuleBuilderFinished(myRule);
+					}
 				}
 
 			}
@@ -541,9 +611,10 @@ public class RuleBuilder implements IAuthRuleBuilder {
 
 				@Override
 				public IAuthRuleBuilderRuleOpClassifierFinished andApplyNormalRules() {
+					// Allow transaction
 					RuleImplOp rule = new RuleImplOp(myRuleName);
 					rule.setMode(myRuleMode);
-					rule.setOp(myRuleOp);
+					rule.setOp(RuleOpEnum.TRANSACTION);
 					rule.setTransactionAppliesToOp(TransactionAppliesToEnum.ANY_OPERATION);
 					myRules.add(rule);
 					return new RuleBuilderFinished(rule);
@@ -553,6 +624,43 @@ public class RuleBuilder implements IAuthRuleBuilder {
 
 		}
 
+		private class PatchBuilder implements IAuthRuleBuilderPatch {
+
+			PatchBuilder() {
+				super();
+			}
+
+			@Override
+			public IAuthRuleFinished allRequests() {
+				BaseRule rule = new RuleImplPatch(myRuleName)
+					.setAllRequests(true)
+					.setMode(myRuleMode);
+				myRules.add(rule);
+				return new RuleBuilderFinished(rule);
+			}
+		}
+
+		private class RuleBuilderGraphQL implements IAuthRuleBuilderGraphQL {
+			@Override
+			public IAuthRuleFinished any() {
+				RuleImplOp rule = new RuleImplOp(myRuleName);
+				rule.setOp(RuleOpEnum.GRAPHQL);
+				rule.setMode(myRuleMode);
+				myRules.add(rule);
+				return new RuleBuilderFinished(rule);
+			}
+		}
+	}
+
+	private static String toTypeName(Class<? extends IBaseResource> theType) {
+		String retVal = ourTypeToName.get(theType);
+		if (retVal == null) {
+			ResourceDef resourceDef = theType.getAnnotation(ResourceDef.class);
+			retVal = resourceDef.name();
+			Validate.notBlank(retVal, "Could not determine resource type of class %s", theType);
+			ourTypeToName.put(theType, retVal);
+		}
+		return retVal;
 	}
 
 }

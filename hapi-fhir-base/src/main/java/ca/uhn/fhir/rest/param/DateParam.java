@@ -4,14 +4,14 @@ package ca.uhn.fhir.rest.param;
  * #%L
  * HAPI FHIR - Core Library
  * %%
- * Copyright (C) 2014 - 2018 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -26,7 +26,6 @@ import ca.uhn.fhir.model.api.TemporalPrecisionEnum;
 import ca.uhn.fhir.model.primitive.BaseDateTimeDt;
 import ca.uhn.fhir.model.primitive.DateDt;
 import ca.uhn.fhir.model.primitive.DateTimeDt;
-import ca.uhn.fhir.model.primitive.InstantDt;
 import ca.uhn.fhir.rest.api.QualifiedParamList;
 import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
 import ca.uhn.fhir.util.ValidateUtil;
@@ -44,7 +43,7 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
 public class DateParam extends BaseParamWithPrefix<DateParam> implements /*IQueryParameterType , */IQueryParameterOr<DateParam> {
 
 	private static final long serialVersionUID = 1L;
-	
+
 	private final DateParamDateTimeHolder myValue = new DateParamDateTimeHolder();
 
 	/**
@@ -117,9 +116,7 @@ public class DateParam extends BaseParamWithPrefix<DateParam> implements /*IQuer
 			b.append(ParameterUtil.escapeWithDefault(getPrefix().getValue()));
 		}
 		
-		if (myValue != null) {
-			b.append(ParameterUtil.escapeWithDefault(myValue.getValueAsString()));
-		}
+		b.append(ParameterUtil.escapeWithDefault(myValue.getValueAsString()));
 
 		return b.toString();
 	}
@@ -130,38 +127,15 @@ public class DateParam extends BaseParamWithPrefix<DateParam> implements /*IQuer
 	}
 
 	public TemporalPrecisionEnum getPrecision() {
-		if (myValue != null) {
 			return myValue.getPrecision();
-		}
-		return null;
 	}
 
 	public Date getValue() {
-		if (myValue != null) {
 			return myValue.getValue();
-		}
-		return null;
-	}
-
-	public DateTimeDt getValueAsDateTimeDt() {
-		if (myValue == null) {
-			return null;
-		}
-		return new DateTimeDt(myValue.getValue());
-	}
-
-	public InstantDt getValueAsInstantDt() {
-		if (myValue == null) {
-			return null;
-		}
-		return new InstantDt(myValue.getValue());
 	}
 
 	public String getValueAsString() {
-		if (myValue != null) {
 			return myValue.getValueAsString();
-		}
-		return null;
 	}
 
 	@Override
@@ -222,7 +196,7 @@ public class DateParam extends BaseParamWithPrefix<DateParam> implements /*IQuer
 		if (theParameters.size() == 1) {
 			setValueAsString(theParameters.get(0));
 		} else if (theParameters.size() > 1) {
-			throw new InvalidRequestException("This server does not support multi-valued dates for this paramater: " + theParameters);
+			throw new InvalidRequestException("This server does not support multi-valued dates for this parameter: " + theParameters);
 		}
 		
 	}
@@ -253,7 +227,17 @@ public class DateParam extends BaseParamWithPrefix<DateParam> implements /*IQuer
 		return b.build();
 	}
 
-	public class DateParamDateTimeHolder extends BaseDateTimeDt {
+	public static class DateParamDateTimeHolder extends BaseDateTimeDt {
+
+		/**
+		 * Constructor
+		 */
+		// LEAVE THIS AS PUBLIC!!
+		@SuppressWarnings("WeakerAccess")
+		public DateParamDateTimeHolder() {
+			super();
+		}
+
 		@Override
 		protected TemporalPrecisionEnum getDefaultPrecisionForDatatype() {
 			return TemporalPrecisionEnum.SECOND;

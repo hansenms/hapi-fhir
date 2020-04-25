@@ -7,7 +7,7 @@ import org.hl7.fhir.dstu3.model.Bundle;
 import org.junit.AfterClass;
 import org.junit.Test;
 
-import ca.uhn.fhir.jpa.dao.DaoMethodOutcome;
+import ca.uhn.fhir.jpa.api.model.DaoMethodOutcome;
 import ca.uhn.fhir.util.TestUtil;
 
 public class FhirResourceDaoDocumentDstu3Test extends BaseJpaDstu3Test {
@@ -26,6 +26,4 @@ public class FhirResourceDaoDocumentDstu3Test extends BaseJpaDstu3Test {
 		Bundle inputBundle = myFhirCtx.newXmlParser().parseResource(Bundle.class, input);
 		DaoMethodOutcome responseBundle = myBundleDao.create(inputBundle, mySrd);
 	}
-	
-
 }

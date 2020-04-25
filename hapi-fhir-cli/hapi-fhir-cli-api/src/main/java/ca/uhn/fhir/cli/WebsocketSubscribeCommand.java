@@ -4,14 +4,14 @@ package ca.uhn.fhir.cli;
  * #%L
  * HAPI FHIR - Command Line Client - API
  * %%
- * Copyright (C) 2014 - 2018 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -37,6 +37,7 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 public class WebsocketSubscribeCommand extends BaseCommand {
 	private static final org.slf4j.Logger LOG_RECV = org.slf4j.LoggerFactory.getLogger("websocket.RECV");
 	private static final org.slf4j.Logger LOG_SEND = org.slf4j.LoggerFactory.getLogger("websocket.SEND");
+	// TODO: Don't use qualified names for loggers in HAPI CLI.
 	private static final org.slf4j.Logger ourLog = org.slf4j.LoggerFactory.getLogger(WebsocketSubscribeCommand.class);
 
 	private boolean myQuit;

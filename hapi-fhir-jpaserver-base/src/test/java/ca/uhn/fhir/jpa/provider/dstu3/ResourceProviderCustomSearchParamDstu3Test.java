@@ -1,34 +1,43 @@
 package ca.uhn.fhir.jpa.provider.dstu3;
 
-import static org.hamcrest.Matchers.contains;
-import static org.hamcrest.Matchers.containsString;
-import static org.junit.Assert.*;
-
-import java.io.IOException;
-import java.util.*;
-
-import org.apache.commons.io.IOUtils;
-import org.apache.http.client.methods.CloseableHttpResponse;
-import org.apache.http.client.methods.HttpGet;
-import org.hl7.fhir.dstu3.model.*;
-import org.hl7.fhir.dstu3.model.CapabilityStatement.*;
-import org.hl7.fhir.dstu3.model.Enumerations.AdministrativeGender;
-import org.hl7.fhir.dstu3.model.Observation.ObservationStatus;
-import org.hl7.fhir.dstu3.model.SearchParameter.XPathUsageType;
-import org.hl7.fhir.instance.model.api.IIdType;
-import org.junit.*;
-import org.springframework.transaction.TransactionStatus;
-import org.springframework.transaction.support.TransactionCallbackWithoutResult;
-import org.springframework.transaction.support.TransactionTemplate;
-
-import ca.uhn.fhir.jpa.dao.*;
-import ca.uhn.fhir.jpa.entity.ResourceTable;
+import ca.uhn.fhir.jpa.dao.BaseHapiFhirDao;
+import ca.uhn.fhir.jpa.entity.ResourceReindexJobEntity;
+import ca.uhn.fhir.jpa.model.entity.ModelConfig;
+import ca.uhn.fhir.jpa.model.entity.ResourceTable;
+import ca.uhn.fhir.jpa.searchparam.SearchParameterMap;
 import ca.uhn.fhir.rest.api.Constants;
 import ca.uhn.fhir.rest.api.server.IBundleProvider;
 import ca.uhn.fhir.rest.gclient.ReferenceClientParam;
 import ca.uhn.fhir.rest.gclient.TokenClientParam;
 import ca.uhn.fhir.rest.server.exceptions.UnprocessableEntityException;
 import ca.uhn.fhir.util.TestUtil;
+import org.apache.commons.io.IOUtils;
+import org.apache.http.client.methods.CloseableHttpResponse;
+import org.apache.http.client.methods.HttpGet;
+import org.hl7.fhir.dstu3.model.*;
+import org.hl7.fhir.dstu3.model.CapabilityStatement.CapabilityStatementRestComponent;
+import org.hl7.fhir.dstu3.model.CapabilityStatement.CapabilityStatementRestResourceComponent;
+import org.hl7.fhir.dstu3.model.CapabilityStatement.CapabilityStatementRestResourceSearchParamComponent;
+import org.hl7.fhir.dstu3.model.Enumerations.AdministrativeGender;
+import org.hl7.fhir.dstu3.model.Observation.ObservationStatus;
+import org.hl7.fhir.dstu3.model.SearchParameter.XPathUsageType;
+import org.hl7.fhir.instance.model.api.IIdType;
+import org.junit.After;
+import org.junit.AfterClass;
+import org.junit.Before;
+import org.junit.Test;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.TransactionCallbackWithoutResult;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsString;
+import static org.junit.Assert.*;
 
 public class ResourceProviderCustomSearchParamDstu3Test extends BaseResourceProviderDstu3Test {
 
@@ -39,7 +48,7 @@ public class ResourceProviderCustomSearchParamDstu3Test extends BaseResourceProv
 	public void after() throws Exception {
 		super.after();
 
-		myDaoConfig.setDefaultSearchParamsCanBeOverridden(new DaoConfig().isDefaultSearchParamsCanBeOverridden());
+		myModelConfig.setDefaultSearchParamsCanBeOverridden(new ModelConfig().isDefaultSearchParamsCanBeOverridden());
 	}
 
 	@Override
@@ -52,8 +61,8 @@ public class ResourceProviderCustomSearchParamDstu3Test extends BaseResourceProv
 	public void beforeResetConfig() {
 		super.beforeResetConfig();
 
-		myDaoConfig.setDefaultSearchParamsCanBeOverridden(new DaoConfig().isDefaultSearchParamsCanBeOverridden());
-		mySearchParamRegsitry.forceRefresh();
+		myModelConfig.setDefaultSearchParamsCanBeOverridden(new ModelConfig().isDefaultSearchParamsCanBeOverridden());
+		mySearchParamRegistry.forceRefresh();
 	}
 
 	private Map<String, CapabilityStatementRestResourceSearchParamComponent> extractSearchParams(CapabilityStatement conformance, String resType) {
@@ -89,7 +98,7 @@ public class ResourceProviderCustomSearchParamDstu3Test extends BaseResourceProv
 
 	@Test
 	public void testConformanceOverrideAllowed() {
-		myDaoConfig.setDefaultSearchParamsCanBeOverridden(true);
+		myModelConfig.setDefaultSearchParamsCanBeOverridden(true);
 
 		CapabilityStatement conformance = ourClient
 				.fetchConformance()
@@ -111,6 +120,7 @@ public class ResourceProviderCustomSearchParamDstu3Test extends BaseResourceProv
 				SearchParameter fooSp = new SearchParameter();
 				fooSp.addBase("Patient");
 				fooSp.setCode("foo");
+				fooSp.setName("foo");
 				fooSp.setType(org.hl7.fhir.dstu3.model.Enumerations.SearchParamType.TOKEN);
 				fooSp.setTitle("FOO SP");
 				fooSp.setExpression("Patient.gender");
@@ -139,7 +149,7 @@ public class ResourceProviderCustomSearchParamDstu3Test extends BaseResourceProv
 		txTemplate.execute(new TransactionCallbackWithoutResult() {
 			@Override
 			protected void doInTransactionWithoutResult(TransactionStatus theStatus) {
-				mySearchParamRegsitry.forceRefresh();
+				mySearchParamRegistry.forceRefresh();
 			}
 		});
 
@@ -157,59 +167,6 @@ public class ResourceProviderCustomSearchParamDstu3Test extends BaseResourceProv
 
 	}
 
-	@Test
-	public void testConformanceOverrideNotAllowed() {
-		myDaoConfig.setDefaultSearchParamsCanBeOverridden(false);
-
-		CapabilityStatement conformance = ourClient
-				.fetchConformance()
-				.ofType(CapabilityStatement.class)
-				.execute();
-		Map<String, CapabilityStatementRestResourceSearchParamComponent> map = extractSearchParams(conformance, "Patient");
-
-		CapabilityStatementRestResourceSearchParamComponent param = map.get("foo");
-		assertNull(param);
-
-		param = map.get("gender");
-		assertNotNull(param);
-
-		// Add a custom search parameter
-		SearchParameter fooSp = new SearchParameter();
-		fooSp.addBase("Patient");
-		fooSp.setCode("foo");
-		fooSp.setType(org.hl7.fhir.dstu3.model.Enumerations.SearchParamType.TOKEN);
-		fooSp.setTitle("FOO SP");
-		fooSp.setExpression("Patient.gender");
-		fooSp.setXpathUsage(org.hl7.fhir.dstu3.model.SearchParameter.XPathUsageType.NORMAL);
-		fooSp.setStatus(org.hl7.fhir.dstu3.model.Enumerations.PublicationStatus.ACTIVE);
-		mySearchParameterDao.create(fooSp, mySrd);
-
-		// Disable an existing parameter
-		fooSp = new SearchParameter();
-		fooSp.addBase("Patient");
-		fooSp.setCode("gender");
-		fooSp.setType(org.hl7.fhir.dstu3.model.Enumerations.SearchParamType.TOKEN);
-		fooSp.setTitle("Gender");
-		fooSp.setExpression("Patient.gender");
-		fooSp.setXpathUsage(org.hl7.fhir.dstu3.model.SearchParameter.XPathUsageType.NORMAL);
-		fooSp.setStatus(org.hl7.fhir.dstu3.model.Enumerations.PublicationStatus.RETIRED);
-		mySearchParameterDao.create(fooSp, mySrd);
-
-		mySearchParamRegsitry.forceRefresh();
-
-		conformance = ourClient
-				.fetchConformance()
-				.ofType(CapabilityStatement.class)
-				.execute();
-		map = extractSearchParams(conformance, "Patient");
-
-		param = map.get("foo");
-		assertEquals("foo", param.getName());
-
-		param = map.get("gender");
-		assertNotNull(param);
-
-	}
 
 	@Test
 	public void testCreatingParamMarksCorrectResourcesForReindexing() {
@@ -221,9 +178,9 @@ public class ResourceProviderCustomSearchParamDstu3Test extends BaseResourceProv
 		obs2.setStatus(ObservationStatus.FINAL);
 		IIdType obsId = myObservationDao.create(obs2, mySrd).getId().toUnqualifiedVersionless();
 
-		ResourceTable res = myResourceTableDao.findOne(patId.getIdPartAsLong());
+		ResourceTable res = myResourceTableDao.findById(patId.getIdPartAsLong()).orElseThrow(IllegalStateException::new);
 		assertEquals(BaseHapiFhirDao.INDEX_STATUS_INDEXED, res.getIndexStatus().longValue());
-		res = myResourceTableDao.findOne(obsId.getIdPartAsLong());
+		res = myResourceTableDao.findById(obsId.getIdPartAsLong()).orElseThrow(IllegalStateException::new);
 		assertEquals(BaseHapiFhirDao.INDEX_STATUS_INDEXED, res.getIndexStatus().longValue());
 
 		SearchParameter fooSp = new SearchParameter();
@@ -236,11 +193,11 @@ public class ResourceProviderCustomSearchParamDstu3Test extends BaseResourceProv
 		fooSp.setStatus(org.hl7.fhir.dstu3.model.Enumerations.PublicationStatus.ACTIVE);
 		mySearchParameterDao.create(fooSp, mySrd);
 
-		res = myResourceTableDao.findOne(patId.getIdPartAsLong());
-		assertEquals(null, res.getIndexStatus());
-		res = myResourceTableDao.findOne(obsId.getIdPartAsLong());
-		assertEquals(BaseHapiFhirDao.INDEX_STATUS_INDEXED, res.getIndexStatus().longValue());
-
+		runInTransaction(()->{
+			List<ResourceReindexJobEntity> allJobs = myResourceReindexJobDao.findAll();
+			assertEquals(1, allJobs.size());
+			assertEquals("Patient", allJobs.get(0).getResourceType());
+		});
 	}
 
 	@Test
@@ -256,7 +213,7 @@ public class ResourceProviderCustomSearchParamDstu3Test extends BaseResourceProv
 		attendingSp.getTarget().add(new CodeType("Practitioner"));
 		IIdType spId = mySearchParameterDao.create(attendingSp, mySrd).getId().toUnqualifiedVersionless();
 
-		mySearchParamRegsitry.forceRefresh();
+		mySearchParamRegistry.forceRefresh();
 
 		Practitioner p1 = new Practitioner();
 		p1.addName().setFamily("P1");
@@ -306,7 +263,7 @@ public class ResourceProviderCustomSearchParamDstu3Test extends BaseResourceProv
 				.resource(eyeColourSp)
 				.execute();
 
-		mySearchParamRegsitry.forceRefresh();
+		mySearchParamRegistry.forceRefresh();
 
 		Patient p1 = new Patient();
 		p1.setActive(true);
@@ -348,7 +305,7 @@ public class ResourceProviderCustomSearchParamDstu3Test extends BaseResourceProv
 		fooSp.setStatus(org.hl7.fhir.dstu3.model.Enumerations.PublicationStatus.ACTIVE);
 		mySearchParameterDao.create(fooSp, mySrd);
 
-		mySearchParamRegsitry.forceRefresh();
+		mySearchParamRegistry.forceRefresh();
 
 		Patient pat = new Patient();
 		pat.setGender(AdministrativeGender.MALE);
@@ -392,7 +349,7 @@ public class ResourceProviderCustomSearchParamDstu3Test extends BaseResourceProv
 		fooSp.setStatus(org.hl7.fhir.dstu3.model.Enumerations.PublicationStatus.ACTIVE);
 		mySearchParameterDao.create(fooSp, mySrd);
 
-		mySearchParamRegsitry.forceRefresh();
+		mySearchParamRegistry.forceRefresh();
 
 		Patient pat = new Patient();
 		pat.setGender(AdministrativeGender.MALE);

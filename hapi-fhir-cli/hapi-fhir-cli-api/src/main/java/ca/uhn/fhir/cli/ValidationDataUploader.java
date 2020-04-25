@@ -4,14 +4,14 @@ package ca.uhn.fhir.cli;
  * #%L
  * HAPI FHIR - Command Line Client - API
  * %%
- * Copyright (C) 2014 - 2018 University Health Network
+ * Copyright (C) 2014 - 2020 University Health Network
  * %%
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
- * 
+ *
  *      http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
  * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -53,7 +53,6 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 public class ValidationDataUploader extends BaseCommand {
-
 	private static final org.slf4j.Logger ourLog = org.slf4j.LoggerFactory.getLogger(ValidationDataUploader.class);
 
 	private ArrayList<IIdType> myExcludes = new ArrayList<>();
@@ -167,7 +166,7 @@ public class ValidationDataUploader extends BaseCommand {
 
 	}
 
-	private void uploadDefinitionsDstu2(CommandLine theCommandLine, FhirContext ctx) throws CommandFailureException {
+	private void uploadDefinitionsDstu2(CommandLine theCommandLine, FhirContext ctx) throws CommandFailureException, ParseException {
 		IGenericClient client = newClient(theCommandLine);
 
 		ourLog.info("Uploading definitions to server");
@@ -267,7 +266,7 @@ public class ValidationDataUploader extends BaseCommand {
 		ourLog.info("Finished uploading definitions to server (took {} ms)", delay);
 	}
 
-	private void uploadDefinitionsDstu3(CommandLine theCommandLine, FhirContext theCtx) throws CommandFailureException {
+	private void uploadDefinitionsDstu3(CommandLine theCommandLine, FhirContext theCtx) throws CommandFailureException, ParseException {
 		IGenericClient client = newClient(theCommandLine);
 		ourLog.info("Uploading definitions to server");
 
@@ -354,9 +353,10 @@ public class ValidationDataUploader extends BaseCommand {
 		ourLog.info("Finished uploading ValueSets");
 
 
-		uploadDstu3Profiles(theCtx, client, "profiles-resources");
-		uploadDstu3Profiles(theCtx, client, "profiles-types");
-		uploadDstu3Profiles(theCtx, client, "profiles-others");
+		uploadDstu3Profiles(theCtx, client, "profile/profiles-resources");
+		uploadDstu3Profiles(theCtx, client, "profile/profiles-types");
+		uploadDstu3Profiles(theCtx, client, "profile/profiles-others");
+		uploadDstu3Profiles(theCtx, client, "extension/extension-definitions");
 
 		ourLog.info("Finished uploading ValueSets");
 
@@ -365,7 +365,7 @@ public class ValidationDataUploader extends BaseCommand {
 		ourLog.info("Finished uploading definitions to server (took {} ms)", delay);
 	}
 
-	private void uploadDefinitionsR4(CommandLine theCommandLine, FhirContext theCtx) throws CommandFailureException {
+	private void uploadDefinitionsR4(CommandLine theCommandLine, FhirContext theCtx) throws CommandFailureException, ParseException {
 		IGenericClient client = newClient(theCommandLine);
 		ourLog.info("Uploading definitions to server");
 
@@ -446,9 +446,10 @@ public class ValidationDataUploader extends BaseCommand {
 		ourLog.info("Finished uploading ValueSets");
 
 
-		uploadR4Profiles(theCtx, client, "profiles-resources");
-		uploadR4Profiles(theCtx, client, "profiles-types");
-		uploadR4Profiles(theCtx, client, "profiles-others");
+		uploadR4Profiles(theCtx, client, "profile/profiles-resources");
+		uploadR4Profiles(theCtx, client, "profile/profiles-types");
+		uploadR4Profiles(theCtx, client, "profile/profiles-others");
+		uploadR4Profiles(theCtx, client, "extension/extension-definitions");
 
 		ourLog.info("Finished uploading ValueSets");
 
@@ -457,14 +458,14 @@ public class ValidationDataUploader extends BaseCommand {
 		ourLog.info("Finished uploading definitions to server (took {} ms)", delay);
 	}
 
-	private void uploadDstu3Profiles(FhirContext ctx, IGenericClient client, String name) throws CommandFailureException {
+	private void uploadDstu3Profiles(FhirContext ctx, IGenericClient client, String theName) throws CommandFailureException {
 		int total;
 		int count;
 		org.hl7.fhir.dstu3.model.Bundle bundle;
-		ourLog.info("Uploading " + name);
+		ourLog.info("Uploading " + theName);
 		String vsContents;
 		try {
-			vsContents = IOUtils.toString(ValidationDataUploader.class.getResourceAsStream("/org/hl7/fhir/dstu3/model/profile/" + name + ".xml"), "UTF-8");
+			vsContents = IOUtils.toString(ValidationDataUploader.class.getResourceAsStream("/org/hl7/fhir/dstu3/model/" + theName + ".xml"), "UTF-8");
 		} catch (IOException e) {
 			throw new CommandFailureException(e.toString());
 		}
@@ -498,26 +499,26 @@ public class ValidationDataUploader extends BaseCommand {
 				continue;
 			}
 
-			ourLog.info("Uploading {} StructureDefinition {}/{} : {}", new Object[] {name, count, total, next.getIdElement().getValue()});
+			ourLog.info("Uploading {} StructureDefinition {}/{} : {}", new Object[] {theName, count, total, next.getIdElement().getValue()});
 			client.update().resource(next).execute();
 
 			count++;
 		}
 	}
 
-	private void uploadR4Profiles(FhirContext ctx, IGenericClient client, String name) throws CommandFailureException {
+	private void uploadR4Profiles(FhirContext theContext, IGenericClient theClient, String theName) throws CommandFailureException {
 		int total;
 		int count;
 		org.hl7.fhir.r4.model.Bundle bundle;
-		ourLog.info("Uploading " + name);
+		ourLog.info("Uploading " + theName);
 		String vsContents;
 		try {
-			vsContents = IOUtils.toString(ValidationDataUploader.class.getResourceAsStream("/org/hl7/fhir/r4/model/profile/" + name + ".xml"), "UTF-8");
+			vsContents = IOUtils.toString(ValidationDataUploader.class.getResourceAsStream("/org/hl7/fhir/r4/model/" + theName + ".xml"), "UTF-8");
 		} catch (IOException e) {
 			throw new CommandFailureException(e.toString());
 		}
 
-		bundle = ctx.newXmlParser().parseResource(org.hl7.fhir.r4.model.Bundle.class, vsContents);
+		bundle = theContext.newXmlParser().parseResource(org.hl7.fhir.r4.model.Bundle.class, vsContents);
 		filterBundle(bundle);
 		total = bundle.getEntry().size();
 		count = 1;
@@ -546,9 +547,9 @@ public class ValidationDataUploader extends BaseCommand {
 				continue;
 			}
 
-			ourLog.info("Uploading {} StructureDefinition {}/{} : {}", new Object[] {name, count, total, next.getIdElement().getValue()});
+			ourLog.info("Uploading {} StructureDefinition {}/{} : {}", new Object[] {theName, count, total, next.getIdElement().getValue()});
 			try {
-				client.update().resource(next).execute();
+				theClient.update().resource(next).execute();
 			} catch (BaseServerResponseException e) {
 				ourLog.warn("Server responded HTTP " + e.getStatusCode() + ": " + e.toString());
 			}

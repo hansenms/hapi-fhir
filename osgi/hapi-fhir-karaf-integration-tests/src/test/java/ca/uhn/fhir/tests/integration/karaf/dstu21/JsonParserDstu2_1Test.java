@@ -57,7 +57,7 @@ public class JsonParserDstu2_1Test {
 	private FhirContext ourCtx = FhirContext.forDstu2_1();
 
    @Configuration
-   public Option[] config() throws IOException {
+   public Option[] config() {
       return options(
       	KARAF.option(),
 			WRAP.option(),
@@ -431,7 +431,7 @@ public class JsonParserDstu2_1Test {
 	 */
 	@Test
 	public void testEncodeEmptyTag() {
-		ArrayList<org.hl7.fhir.dstu2016may.model.Coding> tagList = new ArrayList<org.hl7.fhir.dstu2016may.model.Coding>();
+		ArrayList<org.hl7.fhir.dstu2016may.model.Coding> tagList = new ArrayList<>();
 		tagList.add(new org.hl7.fhir.dstu2016may.model.Coding());
 		tagList.add(new org.hl7.fhir.dstu2016may.model.Coding().setDisplay("Label"));
 
@@ -447,7 +447,7 @@ public class JsonParserDstu2_1Test {
 	 */
 	@Test
 	public void testEncodeEmptyTag2() {
-		ArrayList<org.hl7.fhir.dstu2016may.model.Coding> tagList = new ArrayList<org.hl7.fhir.dstu2016may.model.Coding>();
+		ArrayList<org.hl7.fhir.dstu2016may.model.Coding> tagList = new ArrayList<>();
 		tagList.add(new org.hl7.fhir.dstu2016may.model.Coding().setSystem("scheme").setCode("code"));
 		tagList.add(new org.hl7.fhir.dstu2016may.model.Coding().setDisplay("Label"));
 
@@ -774,7 +774,7 @@ public class JsonParserDstu2_1Test {
 		ourLog.info(encoded);
 
 		assertThat(encoded, containsString("Patient"));
-		assertThat(encoded, stringContainsInOrder(ca.uhn.fhir.rest.api.Constants.TAG_SUBSETTED_SYSTEM, ca.uhn.fhir.rest.api.Constants.TAG_SUBSETTED_CODE));
+		assertThat(encoded, stringContainsInOrder(ca.uhn.fhir.rest.api.Constants.TAG_SUBSETTED_SYSTEM_DSTU3, ca.uhn.fhir.rest.api.Constants.TAG_SUBSETTED_CODE));
 		assertThat(encoded, not(containsString("text")));
 		assertThat(encoded, not(containsString("THE DIV")));
 		assertThat(encoded, containsString("family"));
@@ -808,7 +808,7 @@ public class JsonParserDstu2_1Test {
 		ourLog.info(encoded);
 
 		assertThat(encoded, containsString("Patient"));
-		assertThat(encoded, stringContainsInOrder("\"tag\"", "\"system\": \"" + ca.uhn.fhir.rest.api.Constants.TAG_SUBSETTED_SYSTEM + "\",", "\"code\": \"" + ca.uhn.fhir.rest.api.Constants.TAG_SUBSETTED_CODE + "\""));
+		assertThat(encoded, stringContainsInOrder("\"tag\"", "\"system\": \"" + ca.uhn.fhir.rest.api.Constants.TAG_SUBSETTED_SYSTEM_DSTU3 + "\",", "\"code\": \"" + ca.uhn.fhir.rest.api.Constants.TAG_SUBSETTED_CODE + "\""));
 		assertThat(encoded, not(containsString("THE DIV")));
 		assertThat(encoded, containsString("family"));
 		assertThat(encoded, not(containsString("maritalStatus")));
@@ -828,7 +828,7 @@ public class JsonParserDstu2_1Test {
 		ourLog.info(encoded);
 
 		assertThat(encoded, containsString("Patient"));
-		assertThat(encoded, stringContainsInOrder("\"tag\"", "\"system\": \"foo\",", "\"code\": \"bar\"", "\"system\": \"" + ca.uhn.fhir.rest.api.Constants.TAG_SUBSETTED_SYSTEM + "\"",
+		assertThat(encoded, stringContainsInOrder("\"tag\"", "\"system\": \"foo\",", "\"code\": \"bar\"", "\"system\": \"" + ca.uhn.fhir.rest.api.Constants.TAG_SUBSETTED_SYSTEM_DSTU3 + "\"",
 			"\"code\": \"" + ca.uhn.fhir.rest.api.Constants.TAG_SUBSETTED_CODE + "\""));
 		assertThat(encoded, not(containsString("THE DIV")));
 		assertThat(encoded, containsString("family"));
@@ -940,7 +940,6 @@ public class JsonParserDstu2_1Test {
 			assertThat(out, containsString("name"));
 			assertThat(out, containsString("id"));
 			assertThat(out, not(containsString("address")));
-			assertThat(out, not(containsString("meta")));
 		}
 	}
 
